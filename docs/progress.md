@@ -9,7 +9,7 @@ P00 starting source: `cabf7c01134a774f846c72dc0b7864e3426c48e0` (`Initial commit
 | P02 | COMPLETE ON COMMIT `30659583a8f94cd16d650efeae7dae60bbf7d786` | User committed/pushed through Desktop; local checks passed; both hosted native jobs passed on the matching full SHA; hosted evidence below |
 | P03 | COMPLETE ON COMMIT `d48bc24c24cf1e1f984343af05366f50c7c7de96` | User committed/pushed through Desktop; local checks passed; both hosted native jobs passed on the matching full SHA; hosted evidence below |
 | P04 | COMPLETE ON COMMIT `8fec0c07e7e2126dc15f3eb6d26c4d369157ed6c` | User committed/pushed through Desktop; both hosted native jobs passed on the matching full SHA; hosted evidence below |
-| P05 | NOT STARTED | Full deadlines and bounded lifecycle |
+| P05 | READY FOR TARGETED RE-REVIEW (local) | F01 shared flags corrected; F02 independently closed and preserved; focused ordinary/race passed; Linux/hosted P05 verification PENDING |
 | P06 | NOT STARTED | Metrics/logs |
 | P07 | NOT STARTED | Retry example and Docker; Docker setup deferred here |
 | P08 | NOT STARTED | Correctness review and vulnerability check |
@@ -190,3 +190,128 @@ Each of two ordinary executable processes returned `200, 200, 503, 200, 200, 503
 P04 is complete on the verified commit. No CI failure requires diagnosis; the sole annotation is an informational macOS ARM64 capacity/queue-time notice. Prior authoring/pending wording in this record and the preserved README belongs to the earlier handoff and is superseded by this evidence. Timeout configuration remains validated/retained without forwarding-deadline enforcement. Deadlines, checked final flush/retained finalization deadlines and graceful shutdown remain P05; metrics/access logs remain P06. P05-P13 remain NOT STARTED.
 
 This hosted-verification task changed only docs/progress.md, left unstaged/uncommitted. Documentation consistency/local-link/anchor/whitespace checks and `git diff --check` passed. No local implementation tests/builds, P05 work, staging, commit, push, dispatch, publication or persistent Git/Go/account change occurred.
+
+## P05 local implementation and review gate
+
+Starting/final HEAD: `61953f1587af3f535f20651ad9402372e1388dec` (`docs: record passing P04 native CI`). Physical/Git roots matched the requested checkout; clean main tracked cached origin/main at entry, with no staged files or Git operation. Sanitized origin fetch/push identify RichardZ-code/http-fault-injection-proxy. Accepted P04 implementation `8fec0c07e7e2126dc15f3eb6d26c4d369157ed6c` is an ancestor; the sole intervening commit changes only this progress note and records P04 completion. All five contract documents matched HEAD before writing. No fetch/pull occurred. P04 run 37267548486 is historical supplied/recorded evidence for its implementation SHA, not a check rerun here or verification of the later note/P05 patch. Hosted P05 CI is PENDING; this uncommitted patch has no assigned revision or run.
+
+P05 keeps complete bounded admission, first-match allocation and cancellable delay before the forwarding child starts. One validated timeout (default 2000 ms, range 1-10000 ms) covers connection acquisition/dialing, request/header/body transfer, downstream writes and the checked final flush. Synthetic responses do not start that child. The installed Go 1.27.1 source confirmed that Transport detaches dial cancellation but retains values; a narrow DialContext adapter restores the originating forwarding lifetime and joins started dials. ReverseProxy remains the forwarding/copy implementation. Admission cancellation interrupts blocked reads through a deadline, closes the owned body and joins its callback; it does not allocate. Native input-timeout evidence remains distinguishable from cancellation-induced read interruption. Allocated cancelled decisions remain consumed.
+
+The data handler records the original absolute 30-second write baseline. At the first proxied downstream write, its narrow response wrapper installs the earlier baseline/forwarding deadline. Informational responses receive a bound without final commitment. A pre-header transport failure/forwarding expiry is written by the handler as an unmarked 502/504 under the still-usable original baseline after callback stop/join. Earlier bounds or failed informational I/O can prevent error delivery. Committed failures preserve the initial status, abort via ErrAbortHandler and append no replacement body. Native read/write causality prevents a write-error-induced connection close from being mistaken for independent client cancellation; an earlier recorded I/O failure does not age into timeout during cleanup. Forced cause precedes genuine client cancellation, independent downstream failure, forwarding expiry and other transfer failures. Final cleanup cancellation does not create a new failure.
+
+Normal copied responses perform an error-observing final flush while forwarding remains active. Outcome capture follows that result and callback/dial cleanup; the private test seam runs after incoming-body cleanup too. Aborting paths do not run a deferred successful flush. The absolute committed-response write deadline is retained through native server finalization. Handler-observable completion excludes later chunk/trailer writes and certifies no client receipt. The source trace also checked ResponseController FlushError/Unwrap delegation, ReverseProxy copy abort/body-close paths, finishRequest after ServeHTTP, context callback stop versus join, and server/signal lifecycle. No toolchain source was modified and no P06 observer/collectors/logging framework was added.
+
+SIGINT/SIGTERM notification is separate from active request cancellation. One coordinator closes both admissions and starts concurrent Shutdown calls under one absolute 5-second grace. Admitted work drains within its own bounds. Grace expiry records forced causes, cancels active work and closes both servers/connections. An additional 1-second budget joins serving, shutdown, independent close attempts, handlers and native connection finalization. Listener/connection Close ownership avoids duplicate raw-close races. Genuine accept/close errors remain identifiable, including spontaneous connection-close failures that stop the sibling; joined expected sentinels do not hide genuine errors. Failed joins produce failure, not a clean result. Clean drain exits 0; forced/runtime/cleanup failure exits 1; invalid configuration remains 2. Repeated signals/calls add no budget. Existing read-header/read/write/idle limits remain 5/10/30/60 seconds, dial 2 seconds, body 1 MiB, headers 32 KiB/128 values and transport pools 128 per host.
+
+Native environment: Go go1.27.1 darwin/arm64, matching host/target, cgo=1, Apple Clang 21.0.0 (clang-2100.1.1.101). All Go checks used process-local `GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=1`, with empty GOFLAGS. No persistent settings changed.
+
+The final stable-source campaign passed exit 0, wall 274.355 seconds, with every selected top-level case and subtest passing exactly 20 times and no failure/skip. Package times: proxy 76.991 seconds; cmd 272.715 seconds. A source-hash comparison confirmed that all cmd/internal Go files stayed unchanged between campaign launch and final checks. The finite 600-second per-package timeout accommodates 20 repetitions of both real 5-second process force cases plus builds/drains. Exact substantive command:
+
+```sh
+GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=1 go test -json -count=20 \
+  -run '^Test(Forwarding|BlockedDownstreamWriteCancellation|BufferedTailFlushCancellation|RetainedFinalizationDeadline|KeepAliveDeadlineCleanup|AdmissionCancellationInterruptsRead|FaultCancelledDelay|TransportFailureAndCancellation|Shutdown|Runtime(ErrorConcurrentStop|ConnectionCloseFailureStopsSibling)|ServeFailureClosesSibling|FailureClassificationDoesNotAgeIntoTimeout|Executable(Signal|DeadlineTransfer))' \
+  -timeout=600s ./internal/proxy ./cmd/faultproxy
+```
+
+The selector actually matched these 27 cases (their subtests were included):
+
+```text
+internal/proxy:
+TestForwardingPreHeaderDeadline
+TestForwardingDeadlineStartsAfterDelay
+TestForwardingDialCancellation
+TestForwardingConnectionQueueDeadline
+TestForwardingPartialTransfer
+TestBufferedTailFlushCancellation
+TestRetainedFinalizationDeadline
+TestKeepAliveDeadlineCleanup
+TestAdmissionCancellationInterruptsRead
+TestBlockedDownstreamWriteCancellation
+TestForwardingInformationalDeadline
+TestFailureClassificationDoesNotAgeIntoTimeout
+TestFaultCancelledDelay
+TestTransportFailureAndCancellation
+TestServeFailureClosesSibling
+TestShutdownCleanSharedDrain
+TestShutdownForcedConcurrentPhases
+TestShutdownSharedAdminBudget
+TestShutdownCleanupErrorPreserved
+TestShutdownJoinFailureReported
+TestShutdownRepeatedCycles
+TestRuntimeErrorConcurrentStop
+TestShutdownConnectionCloseError
+TestRuntimeConnectionCloseFailureStopsSibling
+cmd/faultproxy:
+TestExecutableSignalDrainRestart
+TestExecutableSignalForced
+TestExecutableDeadlineTransfer
+```
+
+Two earlier development campaigns also passed without failed/skipped repetitions: the initial 25-case selection (20 each, wall 273.054 seconds) and an affected-case selection after causal-order/fixture cleanup changes (20 each, wall 98.209 seconds). Subsequent admission/connection-close corrections required the final comprehensive campaign above. Those passes did not excuse later changes or replace final verification. Focused ordinary/race checks were used to diagnose each change before the final campaign.
+
+Final checks after the campaign passed exit 0:
+
+- Formatting: all 28 tracked/new intended Go files checked with `gofmt -l`, failing on any output; none required formatting.
+- `go mod tidy -diff`: no diff. `go mod verify`: `all modules verified`. `go vet ./...`: no diagnostics.
+- `go test -json -count=1 -timeout=120s ./...`: all five packages passed, no failed/skipped tests. Cmd/config/fault/metrics/proxy times: 19.916/0.772/0.523/0.361/17.331 seconds.
+- `go test -race -json -count=1 -timeout=120s ./...`: all five packages passed, no failed/skipped tests or race diagnostics. Respective times: 22.032/2.357/1.576/1.687/19.237 seconds. Separately built executable children are ordinary builds, including inside the race suite; instrumentation covers in-process code.
+- `go build -o bin/faultproxy ./cmd/faultproxy`: native build succeeded. This binary's help/version/example config-check ran from an unrelated disposable directory with PATH empty, all exit 0 and empty stderr. Version identified the unchanged HEAD plus dirty state and go1.27.1; config-check printed exactly `configuration valid\n`. That directory remained empty and was removed. Full suites separately included existing executable config/startup/forwarding/fault/restart/rejection checks and P05 signal/transfer cases.
+- Documentation consistency/local links/anchors/style, tracked/new whitespace, `git diff --check`, protected-file preservation and final repository/index checks passed. AGENTS.md, normative design, full config/schema/fault engine, dependency metadata/pins, and native CI/action pins are unchanged.
+
+Observed demonstrations: an ordinary executable returned unmarked 504 with `gateway timeout\n` after a controlled pre-header stall and upstream context termination. It separately delivered initial 201/`prefix`, then empty tail with unexpected EOF, no appended 504 and upstream termination. Both every-Nth and seeded cancelled-delay cases consumed selected sequence 1/status 503, joined the handler, contacted upstream zero times and preserved allocations 2-5. For SIGINT and SIGTERM, both listeners stopped admission, active 200/`drained\n` completed, the child exited 0 with no diagnostics and a fresh process forwarded on the same addresses. Forced cases with valid 10000-ms forwarding configuration survived admission stop, reached the real 5-second grace (5.004/5.003 seconds in the final ordinary suite), cancelled upstream, reaped with exit 1/`shutdown grace expired` and released both ports. No harness kill substituted for an expected application result.
+
+The buffered-tail fixture uses real upstream HTTP plus native net/http over a one-connection net.Pipe listener. A fixed-length 200-byte body reaches EOF/Close before the first native wire write blocks in the final checked flush; forwarding is still active and no terminal result/handler return precedes its error. Deadline/client/force paths produce incomplete_response/client_cancelled/shutdown_cancelled and join callbacks/dials without relaxing the deadline. A separate supported trailer test observes successful handler flush/return, then a blocked zero-chunk/trailer finalization write that times out under the retained deadline. It keeps the successful handler outcome separate. Pending-byte probes establish a blocked body write without assuming OS buffer size; keep-alive reuse after the prior forwarding deadline succeeds. Controlled dial/connection-queue seams, genuine upstream truncation, shared data/admin drain, concurrent input/delay/forward force, independent cleanup failure and deliberately unjoinable-handler failure assertions all passed.
+
+Failure/repair record: initial sandbox cache/loopback restrictions required unchanged scoped retries. Compilation exposed a timeout-variable shadow and an unused test import, both corrected. Tests exposed duplicate raw-listener-close/Serve-registration races, deadline-derived native cancellation misclassification and a slightly extended expiry-interruption deadline; Close-once ownership, causal connection evidence and absolute minimum selection corrected them. Final review corrected earlier-failure versus later-timer classification and cancellation-induced input timeout handling. Fixture failures were diagnosed: the first body write need not block, the next wire write need not be final framing, unmatched decisions must not fill the delay barrier, and upstream Connection is stripped so spontaneous inbound closure must be requested on the inbound request. Probes/barriers were corrected to establish the intended operation, without weakening assertions. Two spontaneous-close fixture runs timed out before the inbound-close trigger was corrected. The intentionally unresponsive-handler fixture reports forced/join failure and then independently releases/joins its work. No unresolved correctness failure, blind retry, weakened required check or skip remains.
+
+P05 is READY FOR REVIEW locally; hosted P05 CI remains PENDING. Changes are unstaged/uncommitted. Changed files: README.md; docs/design-decisions.md; docs/progress.md; cmd/faultproxy/cli.go; new cmd/faultproxy/signal_test.go; internal/proxy/handler.go, headers.go, runtime.go, fault_test.go; new connection.go, transfer.go, deadline_test.go and shutdown_test.go. No files deleted. Owned disposable campaign logs and test resources were removed after evidence review; ignored rebuilt bin/faultproxy is retained separately. Review admission interruption, transferWriter/forward flush/deadline/cause ordering, forwardingDial ownership, native finalization joining, coordinator error preservation and executable teardown. Suggested summary only: `feat: enforce deadlines and bounded graceful shutdown`.
+
+No material contract conflict is identified. Verification here is native macOS only, not new Linux evidence or proof of race freedom. Finite transfer/resource limits remain; handler completion is not later-framing success or client receipt, and bounded failure exit is not a clean-join claim. After user review and Desktop commit/push as RichardZ-code, inspect the exact resulting SHA and both native hosted jobs before advancing. P06-P13 remain NOT STARTED; metrics/access logs are P06, Docker/retry example P07 and measurements/k6 P09. No staging, commit, push, tag, workflow dispatch, publication, visibility/credential/account change or persistent Git/Go configuration change occurred. Awaiting user review and subsequent hosted evidence.
+
+## P05 audit corrections F01/F02
+
+This section records the preceding revision. Its F01 sink policy and review scope are superseded by the shared-descriptor follow-up below; its full-suite results precede that follow-up.
+
+The independent audit supplied two reproduced findings without repository edits. Both were reproduced locally against the preceding uncommitted implementation before correction. HEAD and cached origin/main remain `61953f1587af3f535f20651ad9402372e1388dec`; the existing 13-file P05 patch was preserved. Historical P04 hosted evidence and the earlier P05 20-run campaign remain tied to their recorded scope, not this corrected source. The latest request explicitly calls for proportionate focused/full verification without repeating unrelated 20-run campaigns.
+
+F01: `go test -v -count=1 -run '^TestExecutableUndrainedStderrShutdown$' -timeout=40s ./cmd/faultproxy` failed exit 1 before correction: the owned child remained alive after the 8-second stop assertion with its actual stderr pipe full and undrained. Failed-test teardown killed/reaped it; that kill was not a passing shutdown result. The CLI now uses the coordinator's existing absolute cleanup deadline and one best-effort nonblocking native write, with no extra writer goroutine, wait, or renewed budget. Expired allowance, full output and unsupported sinks are skipped; messages are capped at 512 bytes and descriptor flags restored. Earlier runtime output can remain blocked at a reported cleanup failure; exit 1 still does not certify clean joining.
+
+F02: `go test -v -count=1 -run '^TestTransportFailureBeforeDelayedDiagnostics$' -timeout=30s ./internal/proxy` failed exit 1 before correction. An immediate live-context transport failure followed by diagnostics held through the 150-ms child deadline yielded 504/upstream_timeout/forwarding_deadline. A failed local deadline installation produced an empty native 200. The added `/write` subcase also failed on prior behavior, returning an empty 504 and false timeout classification. ErrorHandler now records transport failure through the existing causal recorder before diagnostics. Local error delivery checks deadline installation, body write and flush; failed delivery aborts as downstream_error while preserving the original transport error. True forwarding expiry and client/force precedence are unchanged. The writable regression now receives 502/`bad gateway\n`/transport_error; deadline/write/flush failure seams observe wire abort and downstream_error, with the original transport cause retained.
+
+Final-source focused ordinary and native race checks each passed exit 0, 27 top-level cases plus subtests, no failed/skipped cases or race diagnostics. Exact scope, run once each with the same process-local settings as below:
+
+```sh
+go test -json -count=1 \
+  -run '^Test(TransportFailureBeforeDelayedDiagnostics|FailureClassificationDoesNotAgeIntoTimeout|Forwarding.*|BufferedTailFlushCancellation|RetainedFinalizationDeadline|KeepAliveDeadlineCleanup|BlockedDownstreamWriteCancellation|TransferCausePrecedence|Shutdown.*|Runtime.*|TerminalDiagnosticBudget|Executable(UndrainedStderrShutdown|SignalDrainRestart|SignalForced|DeadlineTransfer))$' \
+  -timeout=120s ./internal/proxy ./cmd/faultproxy
+```
+
+The race command adds `-race` to that exact command. Ordinary proxy/cmd times were 5.093/21.251 seconds; race 6.105/22.987 seconds. Preserved final-flush, retained finalization, keep-alive, genuine timeout/cancellation, shared lifecycle and executable signal cases passed. TerminalDiagnosticBudget verifies immediate return on a full pipe with time remaining, restored blocking flags, successful writable output and no output after allowance expiry. The executable regression fills to actual EAGAIN without a pipe-capacity assumption, triggers a real upstream pre-header connection failure, sends SIGTERM to its owned PID, leaves stderr undrained through exit 1 and verifies rebind. Final ordinary/race suites observed 65536 bytes held full and exit at 6.005/6.005 seconds; no harness kill substituted for those exits. Executable children are ordinary builds, even inside the race suite.
+
+Final native Go go1.27.1 darwin/arm64 host/target, cgo=1, clang checks used process-local `GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=1`, empty GOFLAGS. All passed exit 0: formatting across all 28 tracked/new Go files; `go mod tidy -diff` (no diff); `go mod verify` (all modules verified); `go vet ./...`; `go build -o bin/faultproxy ./cmd/faultproxy`; `go test -json -count=1 -timeout=120s ./...`; `go test -race -json -count=1 -timeout=120s ./...`. Both full suites passed all five packages with no failures/skips; race emitted no diagnostics. Cmd/config/fault/metrics/proxy times: ordinary 25.554/0.846/0.331/0.433/17.987 seconds; race 26.844/2.342/1.555/1.563/19.514 seconds. Source hashes stayed identical through focused and full checks. Documentation/link/anchor/whitespace checks, protected-file preservation and `git diff --check` passed. No correctness failure remains unexplained or assertion weakened.
+
+This correction touched nine existing P05 files: cmd/faultproxy/cli.go and signal_test.go; internal/proxy/handler.go, transfer.go, runtime.go and deadline_test.go; README.md; docs/design-decisions.md; docs/progress.md. No additional file/dependency/schema/workflow or normative-design change. The complete P05 changed-file list remains the 13 files above, all unstaged/uncommitted, with no deletion. Disposable verification logs were removed after evidence review; the rebuilt ignored bin/faultproxy is retained separately.
+
+P05 is READY FOR TARGETED RE-REVIEW of F01's output/deadline/exit path and F02's causal capture/local-error abort path. Hosted P05 CI is PENDING; no new Linux verification is claimed. Final diagnostics may be dropped or truncated and regular-file/arbitrary-writer terminal sinks are skipped; earlier blocked output can require bounded failure exit. Handler-observable completion remains distinct from later framing/client receipt. P06-P13 remain NOT STARTED. No staging, commit, push, dispatch, publication, credential/account or persistent Git/Go configuration change occurred. Awaiting targeted independent re-review, then user review/Desktop commit/push and verification of both native hosted jobs for the resulting exact revision.
+
+## P05 F01 shared-descriptor follow-up
+
+The independent audit reproduced temporary shared status-flag mutation by the initial F01 correction. The new `TestTerminalDiagnosticSharedDescriptor` checks a real duplicated descriptor synchronously at the write boundary, before any restoration could hide the change. Against the preceding behavior it failed exit 1: an initially blocking duplicate changed from `0x10001` to `0x10005` during output, and a write was incorrectly attempted. The same regression passed after removing both F_SETFL calls. Initially blocking sinks now receive zero attempts; supported already nonblocking sinks receive at most one attempt without changing flags. The coordinator's existing cleanup deadline, 512-byte cap and no-additional-writer/no-new-budget policy are preserved.
+
+Terminal diagnostics support native pipes, sockets and character devices only when already nonblocking. Blocking sinks, including ordinary inherited blocking stderr even when writable, regular files and arbitrary writers are skipped. Expired allowance, backpressure, errors or short writes can drop or truncate output. README and D09's implementation clarification reflect this policy. The forced SIGINT/SIGTERM executable fixture now supplies explicitly nonblocking stderr and retains its diagnostic assertion, actual five-second grace, upstream cancellation, exit 1 and port-reuse assertions. Its duplicated descriptor provides test ownership, not isolation of shared flags. The full, undrained-stderr executable regression is unchanged and still requires application exit rather than a teardown kill.
+
+Final focused checks used native Go 1.27.1 darwin/arm64 with cgo=1, process-local `GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=1` and empty GOFLAGS. Both commands passed exit 0, all 16 top-level cases plus subtests, with no failures/skips or race diagnostics:
+
+```sh
+go test -v -count=1 \
+  -run '^Test(TerminalDiagnostic(SharedDescriptor|Budget)|Executable(UndrainedStderrShutdown|SignalDrainRestart|SignalForced|DeadlineTransfer)|TransportFailureBeforeDelayedDiagnostics|FailureClassificationDoesNotAgeIntoTimeout|ForwardingPreHeaderDeadline|ForwardingPartialTransfer|BufferedTailFlushCancellation|RetainedFinalizationDeadline|KeepAliveDeadlineCleanup|TransferCausePrecedence|ShutdownCleanupErrorPreserved|ShutdownJoinFailureReported)$' \
+  -timeout=120s ./cmd/faultproxy ./internal/proxy
+```
+
+The race command adds `-race` to that exact command. Cmd/proxy times were ordinary 21.494/3.201 seconds and race 23.315/3.991 seconds. With 65536 bytes held full and never drained, the owned executable exited 1 in 6.003209792/6.005781291 seconds respectively and released both ports, without a harness kill. Clean drain/restart, forced shutdown with supported diagnostic output, genuine pre-header 504 and post-header abort, checked buffered-tail flush, retained finalization deadline and keep-alive reuse passed. Executable children remain ordinary builds; race instrumentation covers in-process code.
+
+F02 is independently confirmed closed by the supplied audit. Its production code and regressions were not edited; source hashes for handler.go, transfer.go, deadline_test.go and runtime.go matched entry. Both focused runs preserved delayed-diagnostic 502/transport_error, downstream_error on failed local deadline/write/flush, original transport cause, and genuine cancellation/timeout classification.
+
+Formatting across all 28 tracked/new Go files, `go vet ./...`, documentation consistency/local-link/anchor/whitespace checks, protected-file checks and `git diff --check` passed exit 0. Verification remained proportionate to the diagnostic-only production change: no new full-suite or 20-run campaign was needed or claimed. Prior full-suite/module/build results above belong to their preceding source; the existing ignored bin/faultproxy was not rebuilt by this follow-up. Tests built their own current-source executable children and cleaned up owned processes, listeners and temporary files.
+
+This follow-up changed only cmd/faultproxy/cli.go, cmd/faultproxy/signal_test.go, README.md, docs/design-decisions.md and docs/progress.md. The complete P05 patch remains the same 13-file set, all unstaged/uncommitted; HEAD and cached origin/main remain `61953f1587af3f535f20651ad9402372e1388dec`. No dependency, schema, workflow, normative design or F02 change. P05 is READY FOR TARGETED RE-REVIEW of F01's shared-descriptor/output/deadline/exit behavior. Linux execution and hosted P05 CI remain PENDING. After re-review, user review and GitHub Desktop commit/push as RichardZ-code, verify both native hosted jobs for the exact resulting revision. P06-P13 remain NOT STARTED. No staging, commit, push, dispatch, publication, credential/account or persistent Git/Go configuration change occurred.

@@ -93,7 +93,7 @@ func (b *trailerBody) Close() error {
 	return err
 }
 
-type trailerTransport struct{ transport *http.Transport }
+type trailerTransport struct{ transport http.RoundTripper }
 
 func (t trailerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	res, err := t.transport.RoundTrip(r)
@@ -103,5 +103,9 @@ func (t trailerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	hop := connectionFields(res.Header)
 	cleanTrailers(res.Trailer, hop, false)
 	res.Body = &trailerBody{ReadCloser: res.Body, response: res, hop: hop}
+	if s, ok := r.Context().Value(transferKey{}).(*transfer); ok {
+		s.upstreamStatus = res.StatusCode
+		res.Body = &observedBody{ReadCloser: res.Body, s: s}
+	}
 	return res, nil
 }

@@ -3,10 +3,14 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/RichardZ-code/http-fault-injection-proxy/internal/config"
 	"github.com/RichardZ-code/http-fault-injection-proxy/internal/proxy"
@@ -28,8 +32,8 @@ Options (flags override present environment values, including empty values):
 
 Use long flags once each. Boolean modes accept --flag or --flag=true/false.
 Only one mode may be true. No positional arguments are accepted.
-Forwarding deadlines, checked final flush and graceful shutdown remain P05 work.
-Exit codes: 0 help/version/config-check; 2 invalid usage/options/config; 1 runtime failure.
+SIGINT/SIGTERM: one 5-second drain, then at most 1 second forced cleanup.
+Exit codes: 0 help/version/config-check/clean stop; 2 invalid input; 1 runtime/forced/cleanup failure.
 `
 
 type arguments struct {
@@ -143,16 +147,72 @@ func run(args []string, lookup func(string) (string, bool), stdout, stderr io.Wr
 		fmt.Fprint(stdout, "configuration valid\n")
 		return 0
 	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
 	r, err := proxy.Start(upstream, o.Listen, o.AdminListen, stderr, scenario)
 	if err != nil {
 		fmt.Fprintln(stderr, "faultproxy:", err)
 		return 1
 	}
-	if err := r.Wait(); err != nil {
-		fmt.Fprintln(stderr, "faultproxy:", err)
+	select {
+	case <-signals:
+		err = r.Shutdown()
+	case <-r.Done():
+		err = r.Wait()
+	}
+	if err != nil {
+		terminalDiagnostic(stderr, err, r.CleanupDeadline())
 		return 1
 	}
 	return 0
+}
+
+// Already nonblocking native terminal output gets one attempt within the cleanup
+// time left. Never change shared status flags, start a writer goroutine or wait
+// for a blocked sink. Ordinary runtime diagnostics can exhaust cleanup and
+// produce a failure exit; this final message must not prevent that exit.
+func terminalDiagnostic(w io.Writer, err error, deadline time.Time) {
+	terminalDiagnosticWrite(w, err, deadline, syscall.Write)
+}
+
+// The write boundary lets tests observe shared descriptor flags during output.
+func terminalDiagnosticWrite(w io.Writer, err error, deadline time.Time, write func(int, []byte) (int, error)) {
+	if !time.Now().Before(deadline) {
+		return
+	}
+	f, ok := w.(*os.File)
+	if !ok {
+		return // An arbitrary Writer has no nonblocking guarantee.
+	}
+	raw, e := f.SyscallConn()
+	if e != nil {
+		return
+	}
+	message := []byte(fmt.Sprintln("faultproxy:", err))
+	// Stay within the POSIX minimum atomic pipe-write bound.
+	if len(message) > 512 {
+		message = append(message[:511], '\n')
+	}
+	_ = raw.Control(func(fd uintptr) {
+		if !time.Now().Before(deadline) {
+			return
+		}
+		var st syscall.Stat_t
+		if syscall.Fstat(int(fd), &st) != nil {
+			return
+		}
+		switch st.Mode & syscall.S_IFMT {
+		case syscall.S_IFIFO, syscall.S_IFSOCK, syscall.S_IFCHR:
+		default:
+			return // O_NONBLOCK does not bound regular-file I/O.
+		}
+		flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
+		if errno != 0 || flags&syscall.O_NONBLOCK == 0 {
+			return
+		}
+		_, _ = write(int(fd), message) // Drop on EAGAIN/error/short write.
+	})
 }
 
 func sourceIdentity(info *debug.BuildInfo) string {

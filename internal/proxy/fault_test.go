@@ -377,7 +377,7 @@ func TestFaultCancelledDelay(t *testing.T) {
 			finished := make(chan struct{}, 1)
 			tr := &http.Transport{Proxy: nil}
 			t.Cleanup(tr.CloseIdleConnections)
-			h := dataHandler(parsed, tr, io.Discard, engine, func(d fault.Decision) { started <- d })
+			h := dataHandler(parsed, tr, io.Discard, engine, func(d fault.Decision) { started <- d }, 2*time.Second, nil)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				defer func() { finished <- struct{}{} }()
 				h.ServeHTTP(w, r)

@@ -3,6 +3,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -25,12 +27,14 @@ import (
 const bodyLimit = 1 << 20
 const allowedMethods = "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"
 
-func localResponse(w http.ResponseWriter, r *http.Request, status int, body string) {
+func localResponse(w http.ResponseWriter, r *http.Request, status int, body string) error {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(status)
 	if r.Method != http.MethodHead {
-		_, _ = io.WriteString(w, body)
+		_, err := io.WriteString(w, body)
+		return err
 	}
+	return nil
 }
 
 // Diagnostic adapters deliberately discard raw URLs and error strings.
@@ -55,7 +59,7 @@ func (w diagnosticWriter) Write(p []byte) (int, error) {
 	return len(p), err
 }
 
-func dataHandler(upstream *url.URL, transport *http.Transport, diagnostics io.Writer, engine *fault.Engine, decisionReady func(fault.Decision)) http.Handler {
+func dataHandler(upstream *url.URL, transport http.RoundTripper, diagnostics io.Writer, engine *fault.Engine, decisionReady func(fault.Decision), timeout time.Duration, completed func(transferResult)) http.Handler {
 	p := &httputil.ReverseProxy{
 		Transport: trailerTransport{transport},
 		ErrorLog:  log.New(diagnosticWriter{diagnostics, "faultproxy: upstream response transfer failed"}, "", 0),
@@ -79,6 +83,8 @@ func dataHandler(upstream *url.URL, transport *http.Transport, diagnostics io.Wr
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			s := r.Context().Value(transferKey{}).(*transfer)
+			s.recordFailure("transport", err)
 			if r.Context().Err() != nil {
 				return
 			}
@@ -88,11 +94,41 @@ func dataHandler(upstream *url.URL, transport *http.Transport, diagnostics io.Wr
 				kind = "upstream connection failed"
 			}
 			fmt.Fprintln(diagnostics, "faultproxy:", kind)
-			localResponse(w, r, http.StatusBadGateway, "bad gateway\n")
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
+		conn, _ := r.Context().Value(connectionKey{}).(*requestConnection)
+		if conn != nil {
+			conn.resetInputTimeout()
+		}
+		baseline := time.Now().Add(30 * time.Second)
+		controller := http.NewResponseController(w)
+		if err := controller.SetWriteDeadline(baseline); err != nil {
+			panic(http.ErrAbortHandler)
+		}
+		// Context cancellation alone cannot release an incomplete incoming
+		// body read. Do not close Body from this callback: native Close can
+		// wait for the read lock. A deadline interrupts that read instead.
+		readDone := make(chan struct{})
+		var admissionInterrupted atomic.Bool
+		stopRead := context.AfterFunc(r.Context(), func() {
+			defer close(readDone)
+			if conn == nil || !conn.inputTimedOut() {
+				admissionInterrupted.Store(true)
+			}
+			_ = controller.SetReadDeadline(time.Now())
+		})
+		var result transferResult
+		hasResult := false
+		defer func() {
+			r.Body.Close()
+			if !stopRead() {
+				<-readDone
+			}
+			if hasResult && completed != nil {
+				completed(result)
+			}
+		}()
 		var random [16]byte
 		if _, err := rand.Read(random[:]); err != nil {
 			localResponse(w, r, 500, "internal error\n")
@@ -128,13 +164,13 @@ func dataHandler(upstream *url.URL, transport *http.Transport, diagnostics io.Wr
 			return
 		}
 		payload, err := io.ReadAll(io.LimitReader(r.Body, bodyLimit+1))
-		var timeout net.Error
-		readTimeout := errors.As(err, &timeout) && timeout.Timeout()
+		var inputTimeout net.Error
+		readTimeout := errors.As(err, &inputTimeout) && inputTimeout.Timeout()
 		// net/http also cancels its context when the connection read deadline
 		// fires. That cancellation is caused by the input timeout, not proof
 		// of a client disconnect.
-		if r.Context().Err() != nil && !readTimeout {
-			return
+		if forced(r.Context()) || r.Context().Err() != nil && (!readTimeout || admissionInterrupted.Load()) {
+			panic(http.ErrAbortHandler)
 		}
 		if len(payload) > bodyLimit {
 			rejectBody(w, r, 413, "request body too large\n")
@@ -152,10 +188,16 @@ func dataHandler(upstream *url.URL, transport *http.Transport, diagnostics io.Wr
 		if err != nil {
 			if r.Context().Err() == nil {
 				localResponse(w, r, 500, "internal error\n")
+			} else {
+				panic(http.ErrAbortHandler)
 			}
 			return
 		}
-		if dispatchDecision(metadata, r, d, decisionReady) != forwardRequest {
+		dispatched := dispatchDecision(metadata, r, d, decisionReady)
+		if dispatched == clientCancelled || dispatched == downstreamError {
+			panic(http.ErrAbortHandler)
+		}
+		if dispatched != forwardRequest {
 			return
 		}
 		hop := connectionFields(r.Header)
@@ -170,7 +212,7 @@ func dataHandler(upstream *url.URL, transport *http.Transport, diagnostics io.Wr
 			in.TransferEncoding = []string{"chunked"}
 		}
 		in.Header.Set(requestIDHeader, id)
-		p.ServeHTTP(w, in)
+		forward(p, w, in, baseline, timeout, func(got transferResult) { result, hasResult = got, true })
 	})
 }
 

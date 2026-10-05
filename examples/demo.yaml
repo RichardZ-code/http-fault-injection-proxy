@@ -1,0 +1,14 @@
+version: 1
+upstream_timeout_ms: 500
+rules:
+  - id: thirds
+    method: GET
+    path_prefix: /ok
+    faults:
+      every_nth_request: 3
+      status: 503
+  - id: delayed
+    method: GET
+    path_prefix: /slow
+    faults:
+      delay_ms: 250

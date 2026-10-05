@@ -40,5 +40,7 @@ go.work.sum
 /tmp/
 /scratch/
 *.log
+/scratch-capture/
+__pycache__/
 .env.*
 !.env.example

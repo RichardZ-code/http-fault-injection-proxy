@@ -1,0 +1,29 @@
+services:
+  upstream:
+    image: faultproxy-upstream:p07-local
+    platform: linux/amd64
+    build:
+      context: .
+      target: upstream
+    command: ["--listen=0.0.0.0:8081", "--delay=3s"]
+    ports:
+      - "127.0.0.1:8081:8081"
+    stop_grace_period: 3s
+  proxy:
+    image: faultproxy:p07-local
+    platform: linux/amd64
+    build:
+      context: .
+      target: proxy
+    command: ["--upstream=http://upstream:8081", "--config=/config/scenario.yaml", "--listen=0.0.0.0:8080", "--admin-listen=0.0.0.0:9090"]
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - type: bind
+        source: ${SCENARIO_FILE:-./examples/demo.yaml}
+        target: /config/scenario.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    stop_grace_period: 10s

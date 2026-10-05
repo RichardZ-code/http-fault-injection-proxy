@@ -1,4 +1,6 @@
 .git
+__pycache__
+scratch-capture
 .env
 .env.*
 !.env.example
@@ -14,3 +16,18 @@ scratch
 *.coverprofile
 coverage.*
 !coverage.go
+
+# Send only the inputs required by the P07 multi-stage build.
+**
+!Dockerfile
+!LICENSE
+!go.mod
+!go.sum
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!examples/
+!examples/**
+!scripts/
+!scripts/capture_logs.py

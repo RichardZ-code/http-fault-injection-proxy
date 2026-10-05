@@ -1,0 +1,17 @@
+services:
+  proxy:
+    image: faultproxy-capture:p07-local
+    build:
+      target: capture
+    # Map this owned output directory's nonroot host identity for readable 0600
+    # captures. The documented invocation rejects UID zero before starting.
+    user: "${CAPTURE_UID:?set a nonzero host UID}:${CAPTURE_GID:?set the host GID}"
+    # Explicit filename: reuse fails rather than overwrite. Choose a new name
+    # before start/recreate. The helper is PID 1 and owns the proxy's stderr.
+    command: ["/capture/${CAPTURE_FILE:?set a fresh capture filename}", "--", "/faultproxy", "--upstream=http://upstream:8081", "--config=/config/scenario.yaml", "--listen=0.0.0.0:8080", "--admin-listen=0.0.0.0:9090"]
+    volumes:
+      - type: bind
+        source: ${CAPTURE_DIR:?set an existing writable capture directory}
+        target: /capture
+        bind:
+          create_host_path: false

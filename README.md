@@ -2,9 +2,9 @@
 
 A Go project for local and CI testing of client behavior under controlled latency, synthetic 5xx responses, and upstream deadlines.
 
-P03 provides tested HTTP pass-through. P04 replaces its temporary configuration subset with the complete strict schema and a working `--check-config`. Startup applies first-match fixed delays and deterministic or seeded synthetic 5xx rules. P05 adds forwarding deadlines, cancellation through blocked I/O, checked final flushing, and bounded signal-driven shutdown. P06 adds bounded Prometheus metrics and structured request logs. Containers, benchmarks, and releases remain later-phase work.
+P03 provides tested HTTP pass-through. P04 replaces its temporary configuration subset with the complete strict schema and a working `--check-config`. Startup applies first-match fixed delays and deterministic or seeded synthetic 5xx rules. P05 adds forwarding deadlines, cancellation through blocked I/O, checked final flushing, and bounded signal-driven shutdown. P06 adds bounded Prometheus metrics and structured request logs. P07 adds native fixture/retry examples and container packaging. P07 container checks passed on Docker Desktop using emulated linux/amd64 execution on Apple Silicon; benchmarks and releases remain later phases.
 
-P05 native Linux/macOS CI passed on its implementation commit: Linux executed in attempt 1; macOS acquired a runner and executed in attempt 2 after an infrastructure cancellation. P06 local verification uses Go 1.27.1 on native macOS ARM64; hosted P06 evidence is pending user review and commit/push. See [progress](docs/progress.md) for exact identities, results, and review gates.
+P05 native Linux/macOS CI passed on its implementation commit: Linux executed in attempt 1; macOS acquired a runner and executed in attempt 2 after an infrastructure cancellation. P06 passed both native hosted jobs on its implementation commit. P07 evidence is local working-tree evidence; its hosted CI is pending. See [progress](docs/progress.md) for exact identities, results, and review gates.
 
 ## Current HTTP runtime and startup boundary
 
@@ -142,9 +142,146 @@ PY
 
 The verified small cohort yielded 200, 200, 503, 200, 200, 503 and six parsed access records (four `upstream_response`, two `synthetic_status`). This is a demonstration, not a lossless guarantee. Proxy contention/backpressure can drop records; native short writes, helper chunk drops/short writes, output failure, or writer termination can leave fragments or lose the tail. Valid JSON alone does not prove a complete capture. Ignore/report malformed lines as above; command-validation/final terminal diagnostics can also be plain text. No fsync/durability or client-receipt claim is made. Keep the directory until inspection, then remove only that owned directory. Capture tests additionally use the POSIX `ps` utility.
 
-Docker/retry examples remain P07; formal benchmarks and k6 remain P09. P06 hosted claims require the resulting committed source and both native CI jobs.
+Formal benchmarks and k6 remain P09. The following P07 container recipes were verified locally with Docker Desktop. They do not establish native Linux or hosted CI results.
 
-P07 Docker/retry capture plan (unverified): include Python 3 and this launcher, or an equivalent owned-pipe launcher, in the demonstration runtime. Give the non-root user a writable host-mounted capture directory and a fresh exclusive filename per start, including restarts. Make the launcher the exec-form entry point so container SIGTERM reaches the proxy, and read/parse the mounted capture file for retry evidence. Ordinary Docker stderr must not be assumed nonblocking or sufficient for `docker logs`. P07 must verify native Linux sink inheritance, mount permissions, fresh-file restart behavior, record parsing, stop/reaping and the container stop timeout against the existing proxy budget. No Docker/container/retry behavior has been tested in P06.
+## P07 fixture and bounded GET retry demonstration
+
+Build from the repository root with Go 1.27.1. Python 3.9+ and POSIX ps are additional capture/test tools, not dependencies of either Go example. The fixture and retry code use only the standard library.
+
+```sh
+GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=1 go build -o bin/faultproxy ./cmd/faultproxy
+GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=1 go build -o bin/upstream ./examples/upstream
+GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=1 go build -o bin/retry-client ./examples/retry-client
+python3 scripts/demo.py
+# To retain files, choose a NEW directory whose parent exists:
+mkdir -p scratch
+python3 scripts/demo.py --output scratch/p07-native
+```
+
+Create `scratch` first for the retained-output command. The default demonstration uses private temporary files and free loopback ports, launches the actual three binaries and reviewed capture helper from outside the checkout, resets both processes between cohorts, reconciles terminal metrics, parses actual safe access records, sends SIGTERM, reaps children and rebinds ports. It removes its default temporary output after parsing. Retained output contains private captures/configs and process diagnostics; remove only the directory you created after inspection. Tests run this same script with ordinary temporary executable builds, including when the Go parent is race-instrumented.
+
+The fixed fixture GET routes are `/ok` (200, `fixture ok\n`), `/error` (genuine 503, `fixture unavailable\n`), `/slow` (wait then 200), and `/partial` (200, chunked `prefix\n`, then abort framing). Bodies use text/plain UTF-8. `/healthz` returns `ok\n`; `/stats` returns JSON calls/active/cancelled. Readiness/statistics, unsupported methods (405), and unknown paths (404) do not consume data counts. Each data-route entry increments calls; active decrements on return; cancelled counts contexts interrupted during waits. No request echo or reset API. Restart resets counts. Default listen is `127.0.0.1:8081`; `--delay=3s` controls only slow/partial waits and accepts 1 ms through 20 s. Containers explicitly bind `0.0.0.0:8081`.
+
+For individual exploration, start `./bin/upstream`, then the proxy with the [demo config](examples/demo.yaml) and its default loopback listeners. Admin readiness never probes upstream; check both services before sending data traffic. Reset the proxy and fixture before EACH comparison cohort. Use [pass-through](examples/pass-through.yaml) to disable faults explicitly.
+
+```sh
+./bin/faultproxy --upstream=http://127.0.0.1:8081 --config=examples/demo.yaml
+# In another terminal, with fresh proxy/fixture state:
+./bin/retry-client --url=http://127.0.0.1:8080/ok --mode=none --operations=6
+# Reset both processes, then:
+./bin/retry-client --url=http://127.0.0.1:8080/ok --mode=retry --operations=6
+curl --noproxy '*' --max-time 2 -fsS http://127.0.0.1:9090/metrics
+curl --noproxy '*' --max-time 2 -fsS http://127.0.0.1:8081/stats
+```
+
+Defaults follow the accepted contract: 5 s per logical operation, 1 s per attempt including body consumption/close, one attempt in `none`, at most three total in `retry`, cancellable 100/200 ms backoff without jitter. Retry 502/503/504 regardless of synthetic marker, classified connection/transport errors, per-attempt deadline and incomplete body transfer while the operation remains live. Permanent request errors, permanent DNS errors, other HTTP statuses, caller cancellation and whole-operation expiry stop. Redirect following and environment proxies are disabled. Success requires a fully consumed 2xx body; read at most 64 KiB+1, reject larger bodies without retry, close on every path and never perform a second unbounded drain. Started dials inherit the attempt's lifetime despite Transport's detached dial context and are joined before returning.
+
+Each JSON result gives `operation_id`, actual `attempts`, final `outcome`, last-attempt `status` when present, `deadline_exhausted`, whole-operation `duration_seconds` including body cleanup/backoff/failures, and `history` with each attempt's outcome/status/injected evidence. Cleanup cancellation cannot rewrite the captured attempt cause. Exit 0 means all requested operations completed 2xx, 1 means at least one failed/cancelled or result output failed, 2 means invalid options/destination before requests. Defaults: mode none, six serial operations (allowed 1-1000), URL shown above. No concurrency/load harness or formal measurement aggregation is provided.
+
+An application attempt is one `Client.Do` plus response handling. Go 1.27.1 can internally replay an idempotent GET on a reused connection; proxy Transport can also replay outbound work. The counter is not a hard wire-request bound. The controlled cohorts reconcile actual proxy/upstream observations and reject contamination/replay discrepancies. Observed native cohorts:
+
+| Reset cohort | Logical operations | Application attempts / proxy requests | Logical success / failure | Synthetic 503 | Upstream calls |
+| --- | --- | --- | --- | --- | --- |
+| No retries | 6 | 6 / 6 | 4 / 2 | 2 | 4 |
+| At most three attempts | 6 | 8 / 8 | 6 / 0 | 2 | 6 |
+
+No-retry responses were 200,200,503,200,200,503. Fresh restart reproduced them. Metrics had matching terminal/histogram counts, two started status actions and no synthetic upstream error events; additional admin scrapes changed nothing. A separate native cohort observed 250 ms selected delay, genuine upstream 503, pre-header 504 and post-header incomplete 200, with two cancelled upstream waits and no active fixture work. These are correctness observations, not performance or general availability claims. Retries consume more requests and operation time and change the global fault schedule.
+
+## P07 containers (verified on Docker Desktop)
+
+Docker Desktop 4.94.0, CLI/Engine 29.8.2, Compose 5.5.1 and Buildx 0.37.2 were verified on the local `desktop-linux` context. Its Linux ARM64 daemon/build platform ran static linux/amd64 application images through emulation. The pinned Go builder executed Go 1.27.1 linux/arm64; the capture image executed Python 3.14.8. These are Mac-hosted Docker checks, not native Linux or hosted CI. No backend/context/settings change was made; the exact emulation backend was not identified.
+
+The CLI was installed inside Docker.app but absent from the agent's PATH. On macOS, inspect that location before reinstalling. This optional PATH adjustment affects only the current shell and also resolves installed credential helpers:
+
+```sh
+if ! command -v docker >/dev/null 2>&1; then
+  test -x /Applications/Docker.app/Contents/Resources/bin/docker &&
+    export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+fi
+```
+
+Read-only preflight before creating resources:
+
+```sh
+docker --version
+docker compose version
+docker buildx version
+docker context show
+docker context inspect --format '{{.Name}} {{.Endpoints.docker.Host}}'
+docker version
+docker buildx ls
+```
+
+Confirm no unexpected DOCKER_HOST/DOCKER_CONTEXT override and a local Linux Docker Desktop endpoint. Inspect the existing builder's endpoint/platforms; do not select a cloud builder or switch global context. The following commands assume the verified local context is `desktop-linux`; substitute its observed name if different. They require Compose v2 with long bind syntax/create_host_path support, BuildKit/buildx and curl. Every command/subprocess must be bounded during verification. Do not create resources if the observed endpoint is remote or unexpected.
+
+[Dockerfile](Dockerfile) default/final target `proxy` is distroless, runs `/faultproxy` directly as UID/GID 65532:65532. Targets `upstream` and `retry-client` contain just their respective example binaries and license in the same runtime. Optional `capture` adds supported Python 3.14.8 and the unchanged helper, launching `python3 /capture_logs.py` directly as PID 1. All proxy targets copy the same build output. There is no shell supervisor, TTY, Docker socket or alternate sink policy. Plain container stderr may be blocking; `docker logs` is not verified access capture. Capture uses the helper-owned pipe inside the container.
+
+All run/build selections are explicitly linux/amd64. The Go builder executes on BuildKit's build platform and cross-builds with build-local CGO_ENABLED=0, GOWORK=off and GOTOOLCHAIN=local, asserting Go 1.27.1 and module integrity. Native cgo/race settings remain 1. No .git build context/VCS invention: container version identity is unknown; record starting SHA, dirty source hashes and actual image IDs separately. Native Darwin ARM64 and cross-built ELF amd64 are distinct from executed Linux containers. Observed daemon and builder-platform execution were Linux ARM64; all four final images/binaries were linux/amd64 and executed under emulation. Base index/amd64 child digests and sources are in [P07 decisions](docs/design-decisions.md#p07-preparation-decisions).
+
+Verified plain-container recipe from the repository root, ports 8080/8081/9090 free:
+
+```sh
+export COMPOSE_PROJECT_NAME="faultproxy-p07-$(date +%s)-$$"
+docker --context desktop-linux compose -f compose.yaml config
+docker --context desktop-linux compose -f compose.yaml build
+docker --context desktop-linux build --platform=linux/amd64 --target=retry-client -t faultproxy-retry:p07-local .
+docker --context desktop-linux compose -f compose.yaml up -d
+# Independently wait up to ten seconds for BOTH endpoints; no data readiness traffic:
+curl --noproxy '*' --retry 10 --retry-delay 1 --retry-connrefused --retry-max-time 10 --max-time 1 -fsS http://127.0.0.1:8081/healthz
+curl --noproxy '*' --retry 10 --retry-delay 1 --retry-connrefused --retry-max-time 10 --max-time 1 -fsS http://127.0.0.1:9090/healthz
+docker --context desktop-linux run --rm --platform=linux/amd64 --network="${COMPOSE_PROJECT_NAME}_default" faultproxy-retry:p07-local --url=http://proxy:8080/ok --mode=none --operations=6
+# Expected client exit 1 because operations 3/6 receive synthetic 503.
+curl --noproxy '*' --max-time 2 -fsS http://127.0.0.1:9090/metrics
+curl --noproxy '*' --max-time 2 -fsS http://127.0.0.1:8081/stats
+docker --context desktop-linux compose -f compose.yaml stop proxy
+docker --context desktop-linux inspect --format '{{json .State}}' "${COMPOSE_PROJECT_NAME}-proxy-1"
+# Inspect application exit and OOM/kill evidence before removal; CLI exit is separate.
+docker --context desktop-linux compose -f compose.yaml down
+```
+
+Use a fresh/reset Compose cohort for retry mode, pass-through (`SCENARIO_FILE=./examples/pass-through.yaml`), delay and partial/timeout checks. Service-name upstream is `http://upstream:8081`. Both proxy listeners bind inside containers to 0.0.0.0; all three published host ports bind to 127.0.0.1. The explicit YAML bind is read-only with create_host_path false, so missing source files cannot silently become directories. There is no implicit configuration, readiness health redefinition, auto-restart policy or released registry tag. Stop proxy while upstream remains alive. External 10 s stop allowance covers its existing 5+1 s policy, helper's separate 0.5 s allowance and orchestration margin; it does not change those internal bounds. Inspect nonroot process identity, effective mounts/ports/config hash and state before cleanup; a missing id/shell in distroless proves nothing about UID.
+
+Verified capture override, starting from no running cohort:
+
+```sh
+mkdir scratch-capture
+chmod 0700 scratch-capture
+test "$(id -u)" -ne 0
+export CAPTURE_UID="$(id -u)" CAPTURE_GID="$(id -g)"
+export CAPTURE_DIR=./scratch-capture CAPTURE_FILE="cohort-$(date +%s)-$$.jsonl"
+docker --context desktop-linux compose -f compose.yaml -f compose.capture.yaml config
+docker --context desktop-linux compose -f compose.yaml -f compose.capture.yaml build
+docker --context desktop-linux compose -f compose.yaml -f compose.capture.yaml up -d
+# Wait for both readiness endpoints as above, then send the controlled cohort.
+docker --context desktop-linux run --rm --platform=linux/amd64 --network="${COMPOSE_PROJECT_NAME}_default" faultproxy-retry:p07-local --url=http://proxy:8080/ok --mode=none --operations=6
+# Expected client exit 1; inspect metrics/stats as in the plain recipe.
+docker --context desktop-linux exec "${COMPOSE_PROJECT_NAME}-proxy-1" python3 --version
+docker --context desktop-linux exec "${COMPOSE_PROJECT_NAME}-proxy-1" python3 -c 'import os; print(os.getuid(), os.getgid())'
+# Stop proxy first; inspect its helper exit/state before down:
+docker --context desktop-linux compose -f compose.yaml -f compose.capture.yaml stop proxy
+docker --context desktop-linux inspect --format '{{json .State}}' "${COMPOSE_PROJECT_NAME}-proxy-1"
+python3 - "$CAPTURE_DIR/$CAPTURE_FILE" <<'PY'
+import json, sys
+with open(sys.argv[1], 'rb') as stream:
+    for line in stream:
+        try:
+            record = json.loads(line)
+        except (ValueError, UnicodeError):
+            print('unparsed fragment')
+            continue
+        if record.get('msg') == 'request completed':
+            print(json.dumps(record))
+PY
+docker --context desktop-linux compose -f compose.yaml -f compose.capture.yaml down
+```
+
+This maps the capture process to the nonzero host UID/GID owning this new, ignored directory so mode-0600 files are host-readable on Linux. It overrides the capture image's default 65532:65532; plain proxy/fixture/client remain 65532:65532. On the verified Docker Desktop setup, UID 501/GID 20 processes created host-readable mode-0600 files in the owned output mount. Recheck sharing/ownership on another host; YAML alone does not establish it. Do not change permissions on existing directories with sensitive files. Choose a fresh exclusive filename for EVERY recreate/start: after stopping, change CAPTURE_FILE and use `up -d --force-recreate`; `start` cannot change an existing container's command. Existing capture files are rejected. Remove only this project's containers/network and owned output after inspection, never prune caches. Local image names above are intentionally retained development artifacts if built, not published releases.
+
+Observed plain and capture cohorts matched the native table: six no-retry operations made six proxy requests/four upstream calls; six retry operations made eight/six. Empty-rule pass-through, fresh state, delay, real upstream 503, pre-header 504, post-header incomplete 200, exact metric reconciliation and admin isolation passed. Five capture cohorts produced 25 parsed access records, no malformed lines and no privacy-canary leaks. Actual process identity, loopback publication and service-name routing passed; a config write attempt failed EROFS. Missing/bad config and missing/unwritable/existing capture paths failed without orphan application resources. Admin remained healthy before a delayed/unavailable fixture; forwarding returned 502 until service recovery.
+
+SIGINT clean stop and SIGTERM active drain/force passed for both entry points. Deliberately forced requests used a 10,000 ms forwarding config with the fixture held for 20 s and alive through cleanup. Plain/capture forced application/helper exits were 1 after approximately 5.42 s; active 3 s requests drained with exit 0. State/events showed no OOM or Docker SIGKILL. The helper preserved proxy exits 0/1/2. A SIGSTOP-stalled writer held 64,637 bytes in its 65,536-byte queue during a bounded 300-request correctness probe; output stayed undrained, proxy reaping preceded writer cleanup, and helper exit 0 released ports. Its unchanged separate writer allowance remains at most 0.5 s after proxy reaping. The helper may kill/reap its own stalled writer; that is distinct from Docker forcibly killing the application.
+
+A real 1,024-byte file-size-limit failure also stopped capture normally, preserving proxy/helper exit 0 while leaving incomplete output. Capture remains lossy. Forced cleanup may add the plain `faultproxy: shutdown grace expired` terminal diagnostic; report that separately from parsed access records and unparsed fragments. Handler completion does not certify client receipt or post-handler framing. Native Linux execution, a clean committed build and new hosted CI remain pending; exact dirty-source image/binary identities and evidence are in [progress](docs/progress.md#p07-docker-continuation-results). P08 is not started.
 
 ## Development
 
@@ -152,7 +289,7 @@ Use Go 1.27.1 and a native C compiler for cgo/race tests (Apple Command Line Too
 
 ```sh
 export GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=1
-test -z "$(gofmt -l cmd/faultproxy/*.go internal/config/*.go internal/fault/*.go internal/metrics/*.go internal/logging/*.go internal/proxy/*.go)"
+test -z "$(gofmt -l cmd/faultproxy/*.go internal/config/*.go internal/fault/*.go internal/metrics/*.go internal/logging/*.go internal/proxy/*.go examples/upstream/*.go examples/retry-client/*.go)"
 go mod tidy -diff
 go mod verify
 go vet ./...

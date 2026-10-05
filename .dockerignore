@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+!.env.example
+bin
+build
+dist
+release
+tmp
+scratch
+*.log
+*.test
+*.out
+*.coverprofile
+coverage.*
+!coverage.go

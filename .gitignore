@@ -31,3 +31,14 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Local build, release, and scratch output
+/bin/
+/build/
+/dist/
+/release/
+/tmp/
+/scratch/
+*.log
+.env.*
+!.env.example

@@ -17,10 +17,8 @@ const usage = `Usage: faultproxy [options]
 Working actions:
   --help                 Show this help without runtime configuration
   --version              Show development identity and build Go version
-  (default run action)   Pass-through with only version: 1 and rules: []
-
-Recognized, unavailable actions:
-  --check-config         Full scenario validation is not implemented yet
+  --check-config         Validate the complete scenario without network activity
+  (default run action)   Apply fault rules and forward to the fixed upstream
 
 Options (flags override present environment values, including empty values):
   --upstream URL         Required HTTP origin; UPSTREAM_URL
@@ -30,9 +28,8 @@ Options (flags override present environment values, including empty values):
 
 Use long flags once each. Boolean modes accept --flag or --flag=true/false.
 Only one mode may be true. No positional arguments are accepted.
-P03 rejects all other config fields/rules. P04 replaces this temporary subset.
 Forwarding deadlines, checked final flush and graceful shutdown remain P05 work.
-Exit codes: 0 help/version; 2 invalid usage/options/config; 1 unavailable/runtime failure.
+Exit codes: 0 help/version/config-check; 2 invalid usage/options/config; 1 runtime failure.
 `
 
 type arguments struct {
@@ -137,15 +134,16 @@ func run(args []string, lookup func(string) (string, bool), stdout, stderr io.Wr
 		fmt.Fprintln(stderr, "faultproxy:", err)
 		return 2
 	}
-	if a.check {
-		fmt.Fprintln(stderr, "faultproxy: config-check is not implemented yet; no scenario validation was performed")
-		return 1
-	}
-	if err := config.ValidatePassThrough(o.Path); err != nil {
+	scenario, err := config.Load(o.Path)
+	if err != nil {
 		fmt.Fprintln(stderr, "faultproxy:", err)
 		return 2
 	}
-	r, err := proxy.Start(upstream, o.Listen, o.AdminListen, stderr)
+	if a.check {
+		fmt.Fprint(stdout, "configuration valid\n")
+		return 0
+	}
+	r, err := proxy.Start(upstream, o.Listen, o.AdminListen, stderr, scenario)
 	if err != nil {
 		fmt.Fprintln(stderr, "faultproxy:", err)
 		return 1

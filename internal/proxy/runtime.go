@@ -11,6 +11,9 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/RichardZ-code/http-fault-injection-proxy/internal/config"
+	"github.com/RichardZ-code/http-fault-injection-proxy/internal/fault"
 )
 
 // Runtime owns both HTTP servers and their shared transport. Close is immediate
@@ -28,11 +31,20 @@ type Runtime struct {
 	done                        chan struct{}
 	err                         error
 	cleanupErr                  error
+	scenario                    config.Config
 }
 
 // Start receives validated immutable startup values. Ephemeral ports are useful
 // to internal fixtures; public CLI validation still disallows port zero.
-func Start(upstream *url.URL, listen, adminListen string, diagnostics io.Writer) (*Runtime, error) {
+func Start(upstream *url.URL, listen, adminListen string, diagnostics io.Writer, scenario config.Config) (*Runtime, error) {
+	return start(upstream, listen, adminListen, diagnostics, scenario, nil)
+}
+
+func start(upstream *url.URL, listen, adminListen string, diagnostics io.Writer, scenario config.Config, decisionReady func(fault.Decision)) (*Runtime, error) {
+	engine, err := fault.New(scenario)
+	if err != nil {
+		return nil, err
+	}
 	diagnostics = &synchronizedWriter{out: diagnostics}
 	data, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -45,7 +57,7 @@ func Start(upstream *url.URL, listen, adminListen string, diagnostics io.Writer)
 	u := *upstream
 	u.Path, u.RawPath = "", ""
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &Runtime{dataAddr: data.Addr(), adminAddr: admin.Addr(), dataListener: data, adminListener: admin, cancel: cancel, done: make(chan struct{})}
+	r := &Runtime{dataAddr: data.Addr(), adminAddr: admin.Addr(), dataListener: data, adminListener: admin, cancel: cancel, done: make(chan struct{}), scenario: scenario}
 	r.transport = &http.Transport{
 		Proxy:              nil,
 		DialContext:        (&net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -63,7 +75,7 @@ func Start(upstream *url.URL, listen, adminListen string, diagnostics io.Writer)
 			ErrorLog:    log.New(diagnosticWriter{diagnostics, "faultproxy: HTTP server failure"}, "", 0),
 		}
 	}
-	r.data = server(dataHandler(&u, r.transport, diagnostics))
+	r.data = server(dataHandler(&u, r.transport, diagnostics, engine, decisionReady))
 	r.admin = server(http.HandlerFunc(adminHandler))
 	go func() {
 		results := make(chan error, 2)

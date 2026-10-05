@@ -54,7 +54,7 @@ func TestExecutableBoundary(t *testing.T) {
 		{"version", []string{"--version"}, 0, "faultproxy dev commit="},
 		{"invalid", []string{"--unknown"}, 2, "unknown option"},
 		{"run", []string{"--upstream=http://unresolved.invalid", "--config=missing.yaml"}, 2, "config requires a readable regular file"},
-		{"check", []string{"--check-config", "--upstream=http://unresolved.invalid", "--config=missing.yaml"}, 1, "config-check is not implemented yet"},
+		{"check", []string{"--check-config", "--upstream=http://unresolved.invalid", "--config=missing.yaml"}, 2, "config requires a readable regular file"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

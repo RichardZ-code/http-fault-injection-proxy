@@ -1,0 +1,19 @@
+version: 1
+seed: 42
+upstream_timeout_ms: 2000
+rules:
+  - id: payments-unavailable
+    method: POST
+    path_prefix: /payments
+    faults:
+      every_nth_request: 3
+      status: 503
+  - id: inventory-slow
+    path_prefix: /inventory
+    faults:
+      delay_ms: 250
+  - id: reports-intermittent
+    path_prefix: /reports
+    faults:
+      probability: 0.20
+      status: 500

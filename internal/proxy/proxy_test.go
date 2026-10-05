@@ -13,12 +13,16 @@ import (
 	"net/http/httptrace"
 	"net/textproto"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/RichardZ-code/http-fault-injection-proxy/internal/config"
 )
 
 func fixture(t *testing.T, h http.Handler) (*Runtime, *httptest.Server, *http.Client) {
@@ -29,7 +33,7 @@ func fixture(t *testing.T, h http.Handler) (*Runtime, *httptest.Server, *http.Cl
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := Start(parsed, "127.0.0.1:0", "127.0.0.1:0", io.Discard)
+	r, err := Start(parsed, "127.0.0.1:0", "127.0.0.1:0", io.Discard, scenario(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +398,7 @@ func TestTransportFailureAndCancellation(t *testing.T) {
 	_ = occupied.Close()
 	u, _ := url.Parse("http://" + address)
 	var diagnostics bytes.Buffer
-	r, err := Start(u, "127.0.0.1:0", "127.0.0.1:0", &diagnostics)
+	r, err := Start(u, "127.0.0.1:0", "127.0.0.1:0", &diagnostics, scenario(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +536,7 @@ func TestBindOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer occupied.Close()
-	if _, err := Start(u, occupied.Addr().String(), "127.0.0.1:0", io.Discard); err == nil || !strings.Contains(err.Error(), "data listener bind") {
+	if _, err := Start(u, occupied.Addr().String(), "127.0.0.1:0", io.Discard, scenario(t, "")); err == nil || !strings.Contains(err.Error(), "data listener bind") {
 		t.Fatalf("data bind: %v", err)
 	}
 	// Reserve and release an ephemeral data address, keeping the admin fixture
@@ -543,7 +547,7 @@ func TestBindOwnership(t *testing.T) {
 	}
 	address := data.Addr().String()
 	data.Close()
-	if _, err := Start(u, address, occupied.Addr().String(), io.Discard); err == nil || !strings.Contains(err.Error(), "admin listener bind") {
+	if _, err := Start(u, address, occupied.Addr().String(), io.Discard, scenario(t, "")); err == nil || !strings.Contains(err.Error(), "admin listener bind") {
 		t.Fatalf("admin bind: %v", err)
 	}
 	rebound, err := net.Listen("tcp", address)
@@ -630,7 +634,7 @@ func TestServeFailureClosesSibling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := Start(upstream, "127.0.0.1:0", "127.0.0.1:0", io.Discard)
+	r, err := Start(upstream, "127.0.0.1:0", "127.0.0.1:0", io.Discard, scenario(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -748,4 +752,20 @@ func TestPassThroughDemonstration(t *testing.T) {
 		t.Fatal("data health path was shadowed")
 	}
 	t.Logf("data /healthz: upstream_path=%s status=%d body=%q upstream_count=%d", got.path, res.StatusCode, b, calls.Load())
+}
+
+func scenario(t *testing.T, text string) config.Config {
+	t.Helper()
+	if text == "" {
+		text = "version: 1\nrules: []\n"
+	}
+	p := filepath.Join(t.TempDir(), "scenario.yaml")
+	if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }

@@ -44,7 +44,8 @@ func cleanTrailers(h http.Header, hop map[string]bool, request bool) {
 // without observing completion or hiding the native error-returning flush.
 type metadataWriter struct {
 	http.ResponseWriter
-	id string
+	id        string
+	synthetic bool
 }
 
 func (w *metadataWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -56,7 +57,11 @@ func (w *metadataWriter) WriteHeader(status int) {
 			h.Del(name)
 		}
 	}
-	h.Del(injectedHeader)
+	if w.synthetic && status >= 500 {
+		h.Set(injectedHeader, "status")
+	} else {
+		h.Del(injectedHeader)
+	}
 	h.Set(requestIDHeader, w.id)
 	w.ResponseWriter.WriteHeader(status)
 }

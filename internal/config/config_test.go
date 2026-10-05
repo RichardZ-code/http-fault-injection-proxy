@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestPassThroughConfig(t *testing.T) {
+func TestConfig(t *testing.T) {
 	cases := []struct {
 		name, text string
 		valid      bool
@@ -20,9 +20,9 @@ func TestPassThroughConfig(t *testing.T) {
 		{"unknown", "version: 1\nrules: []\nsecret: private-value\n", false},
 		{"duplicate version", "version: 1\nversion: 1\nrules: []\n", false},
 		{"duplicate rules", "version: 1\nrules: []\nrules: []\n", false},
-		{"seed", "version: 1\nrules: []\nseed: 42\n", false},
-		{"timeout", "version: 1\nrules: []\nupstream_timeout_ms: 2000\n", false},
-		{"nonempty rules", "version: 1\nrules: [{id: example}]\n", false},
+		{"seed", "version: 1\nrules: []\nseed: 42\n", true},
+		{"timeout", "version: 1\nrules: []\nupstream_timeout_ms: 2000\n", true},
+		{"incomplete rule", "version: 1\nrules: [{id: example}]\n", false},
 		{"second document", "version: 1\nrules: []\n---\nversion: 1\nrules: []\n", false},
 		{"empty second", "version: 1\nrules: []\n---\n", false},
 		{"malformed second", "version: 1\nrules: []\n---\n[\n", false},
@@ -60,7 +60,7 @@ func TestPassThroughConfig(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.text), 0600); err != nil {
 				t.Fatal(err)
 			}
-			err := ValidatePassThrough(path)
+			_, err := Load(path)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%t error=%v", tc.valid, err)
 			}
@@ -74,10 +74,10 @@ func TestPassThroughConfig(t *testing.T) {
 	}
 }
 
-func TestPassThroughConfigFileAdmission(t *testing.T) {
+func TestConfigFileAdmission(t *testing.T) {
 	dir := t.TempDir()
 	for _, path := range []string{filepath.Join(dir, "missing.yaml"), dir} {
-		if err := ValidatePassThrough(path); err == nil {
+		if _, err := Load(path); err == nil {
 			t.Fatalf("admitted missing/nonregular file %s", path)
 		}
 	}
@@ -87,7 +87,7 @@ func TestPassThroughConfigFileAdmission(t *testing.T) {
 		if err := os.WriteFile(path, []byte(base+strings.Repeat("x", size-len(base))), 0600); err != nil {
 			t.Fatal(err)
 		}
-		err := ValidatePassThrough(path)
+		_, err := Load(path)
 		if (err == nil) != (size == configLimit) {
 			t.Fatalf("size=%d error=%v", size, err)
 		}
@@ -99,7 +99,7 @@ func TestPassThroughConfigFileAdmission(t *testing.T) {
 	// Root can read mode-000 files; exercise actual permission denial only when
 	// the running user observes it, without changing machine permissions.
 	if f, err := os.Open(path); err != nil {
-		if err := ValidatePassThrough(path); err == nil {
+		if _, err := Load(path); err == nil {
 			t.Fatal("unreadable file admitted")
 		}
 		t.Log("actual file permission denial rejected")

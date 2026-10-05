@@ -178,8 +178,11 @@ func TestExecutableInvalidConfigBeforeBind(t *testing.T) {
 	for _, tc := range []struct{ name, text string }{
 		{"missing", ""}, {"empty", ""}, {"unknown", valid + "extra: private-value\n"},
 		{"duplicate", valid + "version: 1\n"}, {"duplicate rules", valid + "rules: []\n"},
-		{"seed", valid + "seed: 42\n"}, {"timeout", valid + "upstream_timeout_ms: 2000\n"},
+		{"seed overflow", valid + "seed: 18446744073709551616\n"}, {"timeout zero", valid + "upstream_timeout_ms: 0\n"},
 		{"nonempty", "version: 1\nrules: [{id: example}]\n"},
+		{"unknown nested", "version: 1\nrules: [{id: example, path_prefix: /, faults: {delay_ms: 1, extra: private-value}}]\n"},
+		{"duplicate nested", "version: 1\nrules: [{id: example, path_prefix: /, faults: {delay_ms: 1, 'delay_ms': 2}}]\n"},
+		{"later invalid", "version: 1\nrules: [{id: good, path_prefix: /, faults: {delay_ms: 1}}, {id: bad, path_prefix: /unmatched, faults: {status: 503}}]\n"},
 		{"multiple", valid + "---\n" + valid}, {"empty second", valid + "---\n"},
 		{"malformed", "[private-value"}, {"null rules", "version: 1\nrules: null\n"},
 		{"directive", "%YAML 1.1\n---\n" + valid}, {"anchor", "version: 1\nrules: &x []\n"},

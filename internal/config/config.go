@@ -14,34 +14,34 @@ import (
 
 const configLimit = 1 << 20
 
-// ValidatePassThrough admits only the user-approved temporary P03 schema.
-// P04 replaces this validator with the full schema, not another config mode.
-func ValidatePassThrough(path string) error {
+// Load owns bounded file admission and the full scenario validation path.
+func Load(path string) (Config, error) {
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() {
-		return errors.New("config requires a readable regular file")
+		return Config{}, errors.New("config requires a readable regular file")
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return errors.New("config file could not be opened")
+		return Config{}, errors.New("config file could not be opened")
 	}
 	data, readErr := io.ReadAll(io.LimitReader(f, configLimit+1))
 	closeErr := f.Close()
 	if readErr != nil || closeErr != nil {
-		return errors.New("config file could not be read and closed")
+		return Config{}, errors.New("config file could not be read and closed")
 	}
 	if len(data) == 0 || len(data) > configLimit {
-		return errors.New("config must contain 1 through 1048576 bytes")
+		return Config{}, errors.New("config must contain 1 through 1048576 bytes")
 	}
 	if !utf8.Valid(data) {
-		return errors.New("config must be UTF-8")
+		return Config{}, errors.New("config must be UTF-8")
 	}
 	loader, err := yaml.NewLoader(bytes.NewReader(data), yaml.WithStreamNodes(),
 		yaml.WithPlugin(limit.New(limit.DepthValue(8))))
 	if err != nil {
-		return errors.New("config parser initialization failed")
+		return Config{}, errors.New("config parser initialization failed")
 	}
 	documents := 0
+	var result Config
 	for {
 		var n yaml.Node
 		err := loader.Load(&n)
@@ -51,30 +51,31 @@ func ValidatePassThrough(path string) error {
 		if err != nil {
 			// Parser diagnostics may contain input scalars or credential-bearing
 			// text. Only our own field/line diagnostics reach the CLI.
-			return errors.New("config contains invalid YAML or exceeds parser limits")
+			return Config{}, errors.New("config contains invalid YAML or exceeds parser limits")
 		}
 		if n.Kind == yaml.StreamNode {
 			if n.Stream != nil && (n.Stream.Version != nil || len(n.Stream.TagDirectives) != 0) {
-				return errors.New("config directives are unsupported")
+				return Config{}, errors.New("config directives are unsupported")
 			}
 			continue
 		}
 		documents++
 		if documents != 1 {
-			return errors.New("config requires exactly one document")
+			return Config{}, errors.New("config requires exactly one document")
 		}
 		count := 0
 		if err := checkNodes(&n, 0, &count); err != nil {
-			return err
+			return Config{}, err
 		}
-		if err := passThroughDocument(&n); err != nil {
-			return err
+		result, err = scenarioDocument(&n)
+		if err != nil {
+			return Config{}, err
 		}
 	}
 	if documents != 1 {
-		return errors.New("config requires exactly one nonempty document")
+		return Config{}, errors.New("config requires exactly one nonempty document")
 	}
-	return nil
+	return result, nil
 }
 
 func nodeError(n *yaml.Node, message string) error {
@@ -106,35 +107,6 @@ func checkNodes(n *yaml.Node, depth int, count *int) error {
 		if err := checkNodes(child, depth+1, count); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func passThroughDocument(n *yaml.Node) error {
-	if n.Kind != yaml.DocumentNode || len(n.Content) != 1 || n.Content[0].Kind != yaml.MappingNode {
-		return nodeError(n, "root must be a mapping with version and rules")
-	}
-	m := n.Content[0]
-	version, rules := false, false
-	for i := 0; i < len(m.Content); i += 2 {
-		key, value := m.Content[i], m.Content[i+1]
-		switch key.Value {
-		case "version":
-			if value.Kind != yaml.ScalarNode || value.Tag != "!!int" || value.Style != 0 || value.Value != "1" {
-				return nodeError(value, "version must be the unquoted decimal integer 1")
-			}
-			version = true
-		case "rules":
-			if value.Kind != yaml.SequenceNode || len(value.Content) != 0 {
-				return nodeError(value, "P03 requires explicit empty rules: []")
-			}
-			rules = true
-		default:
-			return nodeError(key, "unsupported P03 field; only version and rules are accepted")
-		}
-	}
-	if !version || !rules {
-		return nodeError(m, "version and explicit empty rules are required")
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-// Package proxy implements the fixed-upstream HTTP/1.1 pass-through runtime.
+// Package proxy implements fixed-upstream HTTP/1.1 forwarding and fault dispatch.
 package proxy
 
 import (
@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/RichardZ-code/http-fault-injection-proxy/internal/fault"
 )
 
 const bodyLimit = 1 << 20
@@ -53,7 +55,7 @@ func (w diagnosticWriter) Write(p []byte) (int, error) {
 	return len(p), err
 }
 
-func dataHandler(upstream *url.URL, transport *http.Transport, diagnostics io.Writer) http.Handler {
+func dataHandler(upstream *url.URL, transport *http.Transport, diagnostics io.Writer, engine *fault.Engine, decisionReady func(fault.Decision)) http.Handler {
 	p := &httputil.ReverseProxy{
 		Transport: trailerTransport{transport},
 		ErrorLog:  log.New(diagnosticWriter{diagnostics, "faultproxy: upstream response transfer failed"}, "", 0),
@@ -97,7 +99,8 @@ func dataHandler(upstream *url.URL, transport *http.Transport, diagnostics io.Wr
 			return
 		}
 		id := hex.EncodeToString(random[:])
-		w = &metadataWriter{ResponseWriter: w, id: id}
+		metadata := &metadataWriter{ResponseWriter: w, id: id}
+		w = metadata
 		w.Header().Set(requestIDHeader, id)
 		if r.ProtoMajor != 1 || r.ProtoMinor != 1 {
 			localResponse(w, r, 505, "http version not supported\n")
@@ -143,6 +146,16 @@ func dataHandler(upstream *url.URL, transport *http.Transport, diagnostics io.Wr
 			} else {
 				rejectBody(w, r, 400, "bad request\n")
 			}
+			return
+		}
+		d, err := engine.Allocate(r.Context(), r.Method, r.URL.Path)
+		if err != nil {
+			if r.Context().Err() == nil {
+				localResponse(w, r, 500, "internal error\n")
+			}
+			return
+		}
+		if dispatchDecision(metadata, r, d, decisionReady) != forwardRequest {
 			return
 		}
 		hop := connectionFields(r.Header)

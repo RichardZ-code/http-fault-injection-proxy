@@ -1,4 +1,4 @@
-// Package config owns option validation and the temporary P03 no-fault schema.
+// Package config owns option and strict scenario validation.
 package config
 
 import (

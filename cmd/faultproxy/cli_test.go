@@ -40,7 +40,7 @@ func TestActionsAndUsage(t *testing.T) {
 		{"empty upstream", []string{"--config=x", "--upstream="}, nil, 2, "--upstream"},
 		{"invalid env listener", valid, map[string]string{"LISTEN_ADDR": ""}, 2, "--listen"},
 		{"run missing config", valid, nil, 2, "config requires a readable regular file"},
-		{"check unavailable", append(append([]string{}, valid...), "--check-config"), nil, 1, "config-check is not implemented yet"},
+		{"check missing config", append(append([]string{}, valid...), "--check-config"), nil, 2, "config requires a readable regular file"},
 		{"environment missing config", nil, map[string]string{"UPSTREAM_URL": "http://host", "CONFIG_PATH": "missing.yaml"}, 2, "config requires a readable regular file"},
 	}
 	for _, tc := range cases {

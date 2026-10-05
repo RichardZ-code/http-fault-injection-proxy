@@ -15,7 +15,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -43,23 +42,12 @@ type diagnosticWriter struct {
 	message string
 }
 
-type synchronizedWriter struct {
-	mu  sync.Mutex
-	out io.Writer
-}
-
-func (w *synchronizedWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.out.Write(p)
-}
-
 func (w diagnosticWriter) Write(p []byte) (int, error) {
 	_, err := io.WriteString(w.out, w.message+"\n")
 	return len(p), err
 }
 
-func dataHandler(upstream *url.URL, transport http.RoundTripper, diagnostics io.Writer, engine *fault.Engine, decisionReady func(fault.Decision), timeout time.Duration, completed func(transferResult)) http.Handler {
+func dataHandler(upstream *url.URL, transport http.RoundTripper, diagnostics io.Writer, engine *fault.Engine, decisionReady func(fault.Decision), timeout time.Duration, completed func(transferResult), observers ...*observer) http.Handler {
 	p := &httputil.ReverseProxy{
 		Transport: trailerTransport{transport},
 		ErrorLog:  log.New(diagnosticWriter{diagnostics, "faultproxy: upstream response transfer failed"}, "", 0),
@@ -96,16 +84,22 @@ func dataHandler(upstream *url.URL, transport http.RoundTripper, diagnostics io.
 			fmt.Fprintln(diagnostics, "faultproxy:", kind)
 		},
 	}
+	if len(observers) > 0 && observers[0] != nil {
+		p.ErrorLog = log.New(observers[0].logs.Diagnostic("upstream response transfer failed"), "", 0)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		o := &requestObservation{started: time.Now(), method: r.Method, decision: fault.Decision{RuleID: "none"}, result: transferResult{outcome: "internal_error", cause: "internal"}}
+		if len(observers) > 0 {
+			o.observer = observers[0]
+		}
+		local := &localWriter{ResponseWriter: w}
+		w = local
 		conn, _ := r.Context().Value(connectionKey{}).(*requestConnection)
 		if conn != nil {
 			conn.resetInputTimeout()
 		}
 		baseline := time.Now().Add(30 * time.Second)
 		controller := http.NewResponseController(w)
-		if err := controller.SetWriteDeadline(baseline); err != nil {
-			panic(http.ErrAbortHandler)
-		}
 		// Context cancellation alone cannot release an incomplete incoming
 		// body read. Do not close Body from this callback: native Close can
 		// wait for the read lock. A deadline interrupts that read instead.
@@ -121,30 +115,50 @@ func dataHandler(upstream *url.URL, transport http.RoundTripper, diagnostics io.
 		var result transferResult
 		hasResult := false
 		defer func() {
+			// Freeze local causal state before cleanup can cancel the request.
+			if !hasResult {
+				o.result.status = local.status
+				if forced(r.Context()) {
+					o.result.outcome, o.result.cause = "shutdown_cancelled", "shutdown"
+				} else if clientCancellation(r.Context()) && o.result.cause != "input_deadline" {
+					o.result.outcome, o.result.cause = "client_cancelled", "client"
+				} else if local.failed {
+					o.result.outcome, o.result.cause = "downstream_error", "downstream"
+				}
+			} else {
+				o.result = result
+			}
 			r.Body.Close()
 			if !stopRead() {
 				<-readDone
 			}
+			o.finish()
 			if hasResult && completed != nil {
 				completed(result)
 			}
 		}()
+		if err := controller.SetWriteDeadline(baseline); err != nil {
+			panic(http.ErrAbortHandler)
+		}
 		var random [16]byte
 		if _, err := rand.Read(random[:]); err != nil {
 			localResponse(w, r, 500, "internal error\n")
 			return
 		}
 		id := hex.EncodeToString(random[:])
+		o.id = id
 		metadata := &metadataWriter{ResponseWriter: w, id: id}
 		w = metadata
 		w.Header().Set(requestIDHeader, id)
 		if r.ProtoMajor != 1 || r.ProtoMinor != 1 {
+			o.result = transferResult{outcome: "rejected", cause: "validation"}
 			localResponse(w, r, 505, "http version not supported\n")
 			return
 		}
 		switch r.Method {
 		case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS":
 		default:
+			o.result = transferResult{outcome: "rejected", cause: "validation"}
 			w.Header().Set("Allow", allowedMethods)
 			localResponse(w, r, 405, "method not allowed\n")
 			return
@@ -156,10 +170,12 @@ func dataHandler(upstream *url.URL, transport http.RoundTripper, diagnostics io.
 			}
 		}
 		if upgrade || !validTarget(r) {
+			o.result = transferResult{outcome: "rejected", cause: "validation"}
 			localResponse(w, r, 400, "bad request\n")
 			return
 		}
 		if r.ContentLength > bodyLimit {
+			o.result = transferResult{outcome: "rejected", cause: "body_limit"}
 			rejectBody(w, r, 413, "request body too large\n")
 			return
 		}
@@ -173,19 +189,26 @@ func dataHandler(upstream *url.URL, transport http.RoundTripper, diagnostics io.
 			panic(http.ErrAbortHandler)
 		}
 		if len(payload) > bodyLimit {
+			o.result = transferResult{outcome: "rejected", cause: "body_limit"}
 			rejectBody(w, r, 413, "request body too large\n")
 			return
 		}
 		if err != nil {
 			if readTimeout {
+				o.result = transferResult{outcome: "request_timeout", cause: "input_deadline"}
 				rejectBody(w, r, 408, "request timeout\n")
 			} else {
+				o.result = transferResult{outcome: "rejected", cause: "validation"}
 				rejectBody(w, r, 400, "bad request\n")
 			}
 			return
 		}
 		d, err := engine.Allocate(r.Context(), r.Method, r.URL.Path)
+		o.decision = d
 		if err != nil {
+			if errors.Is(err, fault.ErrExhausted) {
+				o.result.cause = "counter_exhausted"
+			}
 			if r.Context().Err() == nil {
 				localResponse(w, r, 500, "internal error\n")
 			} else {
@@ -193,11 +216,15 @@ func dataHandler(upstream *url.URL, transport http.RoundTripper, diagnostics io.
 			}
 			return
 		}
-		dispatched := dispatchDecision(metadata, r, d, decisionReady)
+		dispatched := dispatchDecision(metadata, r, d, decisionReady, o.action)
+		if dispatched == downstreamError {
+			o.result = transferResult{outcome: "downstream_error", cause: "downstream"}
+		}
 		if dispatched == clientCancelled || dispatched == downstreamError {
 			panic(http.ErrAbortHandler)
 		}
 		if dispatched != forwardRequest {
+			o.result = transferResult{outcome: "synthetic_status", cause: "none"}
 			return
 		}
 		hop := connectionFields(r.Header)
@@ -240,19 +267,21 @@ func validTarget(r *http.Request) bool {
 	return err == nil
 }
 
-func adminHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/healthz" && r.URL.Path != "/metrics" {
-		localResponse(w, r, 404, "not found\n")
-		return
-	}
-	if r.Method != "GET" && r.Method != "HEAD" {
-		w.Header().Set("Allow", "GET, HEAD")
-		localResponse(w, r, 405, "method not allowed\n")
-		return
-	}
-	if r.URL.Path == "/metrics" {
-		localResponse(w, r, 503, "metrics not implemented yet\n")
-		return
-	}
-	localResponse(w, r, 200, "ok\n")
+func adminHandler(metricsHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" && r.URL.Path != "/metrics" {
+			localResponse(w, r, 404, "not found\n")
+			return
+		}
+		if r.Method != "GET" && r.Method != "HEAD" {
+			w.Header().Set("Allow", "GET, HEAD")
+			localResponse(w, r, 405, "method not allowed\n")
+			return
+		}
+		if r.URL.Path == "/metrics" {
+			metricsHandler.ServeHTTP(w, r)
+			return
+		}
+		localResponse(w, r, 200, "ok\n")
+	})
 }

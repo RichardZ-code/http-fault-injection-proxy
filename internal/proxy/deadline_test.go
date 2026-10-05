@@ -12,6 +12,7 @@ import (
 	"net/http/httptrace"
 	"net/textproto"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -24,7 +25,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func deadlineHandler(t *testing.T, upstream string, text string, transport http.RoundTripper, completed func(transferResult)) http.Handler {
+func deadlineHandler(t *testing.T, upstream string, text string, transport http.RoundTripper, completed func(transferResult), observations ...*observer) http.Handler {
 	t.Helper()
 	c := scenario(t, text)
 	e, err := fault.New(c)
@@ -35,7 +36,11 @@ func deadlineHandler(t *testing.T, upstream string, text string, transport http.
 	if err != nil {
 		t.Fatal(err)
 	}
-	return dataHandler(u, transport, io.Discard, e, nil, c.UpstreamTimeout(), completed)
+	if len(observations) == 0 {
+		o, _ := testObserver(t)
+		observations = []*observer{o}
+	}
+	return dataHandler(u, transport, io.Discard, e, nil, c.UpstreamTimeout(), completed, observations...)
 }
 
 func deadlineFixture(t *testing.T, h http.Handler, text string) (*httptest.Server, *http.Client, <-chan transferResult) {
@@ -346,6 +351,7 @@ func TestBufferedTailFlushCancellation(t *testing.T) {
 				}
 				return res, err
 			})
+			o, reader := testObserver(t)
 			done := make(chan transferResult, 1)
 			ctx, cancelCause := context.WithCancelCause(context.Background())
 			cancel := func() { cancelCause(context.Canceled) }
@@ -354,13 +360,16 @@ func TestBufferedTailFlushCancellation(t *testing.T) {
 			if mode != "deadline" {
 				timeout = 3000
 			}
-			h := deadlineHandler(t, u.URL, fmt.Sprintf("version: 1\nupstream_timeout_ms: %d\nrules: []\n", timeout), rt, func(r transferResult) { done <- r })
+			h := deadlineHandler(t, u.URL, fmt.Sprintf("version: 1\nupstream_timeout_ms: %d\nrules: []\n", timeout), rt, func(r transferResult) { done <- r }, o)
 			_, probe, returned := pipeServer(t, h, ctx)
 			receive(t, bodyClosed) // ReverseProxy's copy and owned body close finished.
 			if n := receive(t, probe.started); n != 1 {
 				t.Fatal(n)
 			} // First native wire write is the final flush.
 			state := receive(t, states)
+			if snapshot(t, o.metrics).requests != 0 || len(observabilityRead(t, reader)) != 0 {
+				t.Fatal("terminal observation preceded checked flush")
+			}
 			if state.ctx.Err() != nil {
 				t.Fatal("forwarding lifetime ended before flush", state.ctx.Err())
 			}
@@ -385,6 +394,17 @@ func TestBufferedTailFlushCancellation(t *testing.T) {
 				t.Fatal("blocked native flush falsely succeeded")
 			}
 			got := receive(t, done)
+			observed := snapshot(t, o.metrics)
+			records := accessRecords(t, observabilityRead(t, reader))
+			if observed.requests != 1 || observed.histogram != 1 || len(records) != 1 || records[0]["sent_status"] != float64(200) || records[0]["outcome"] != got.outcome {
+				t.Fatal("flush observations", observed, records)
+			}
+			if mode == "deadline" && (observed.sum < .4 || observed.upstream["timeout"] != 1) {
+				t.Fatal("flush interval/event missing", observed)
+			}
+			if mode != "deadline" && len(observed.upstream) != 0 {
+				t.Fatal("cancellation created upstream event", observed)
+			}
 			receive(t, returned)
 			want := "incomplete_response"
 			cause := "forwarding_deadline"
@@ -429,8 +449,9 @@ func TestRetainedFinalizationDeadline(t *testing.T) {
 		states <- r.Context().Value(transferKey{}).(*transfer)
 		return tr.RoundTrip(r)
 	})
+	o, reader := testObserver(t)
 	done := make(chan transferResult, 1)
-	h := deadlineHandler(t, u.URL, "version: 1\nupstream_timeout_ms: 500\nrules: []\n", rt, func(r transferResult) { done <- r })
+	h := deadlineHandler(t, u.URL, "version: 1\nupstream_timeout_ms: 500\nrules: []\n", rt, func(r transferResult) { done <- r }, o)
 	client, probe, returned := pipeServer(t, h, context.Background())
 	res, err := http.ReadResponse(bufio.NewReader(client), &http.Request{Method: "GET"})
 	if err != nil {
@@ -450,6 +471,10 @@ func TestRetainedFinalizationDeadline(t *testing.T) {
 	if got.outcome != "upstream_response" {
 		t.Fatal(got)
 	}
+	before := snapshot(t, o.metrics)
+	if before.requests != 1 || before.outcomes["upstream_response"] != 1 || len(accessRecords(t, observabilityRead(t, reader))) != 1 {
+		t.Fatal("handler completion missing", before)
+	}
 	state := receive(t, states)
 	receive(t, probe.finalStarted)
 	if d := probe.currentDeadline(); d.IsZero() || d.After(state.deadline) {
@@ -458,10 +483,14 @@ func TestRetainedFinalizationDeadline(t *testing.T) {
 	if err := receive(t, probe.finalEnded); err == nil {
 		t.Fatal("blocked post-handler framing write not bounded")
 	}
+	if !reflect.DeepEqual(before, snapshot(t, o.metrics)) || len(observabilityRead(t, reader)) != 0 {
+		t.Fatal("post-handler failure fabricated observation")
+	}
 	t.Log("handler checked flush succeeded; later chunk/trailer finalization write timed out under retained deadline; handler outcome remains separate")
 }
 
 func TestKeepAliveDeadlineCleanup(t *testing.T) {
+	obs, reader := testObserver(t)
 	requests := make(chan *transfer, 2)
 	tr := &http.Transport{Proxy: nil}
 	t.Cleanup(tr.CloseIdleConnections)
@@ -472,7 +501,7 @@ func TestKeepAliveDeadlineCleanup(t *testing.T) {
 		return tr.RoundTrip(r)
 	})
 	done := make(chan transferResult, 2)
-	s := httptest.NewServer(deadlineHandler(t, u.URL, "version: 1\nupstream_timeout_ms: 200\nrules: []\n", rt, func(r transferResult) { done <- r }))
+	s := httptest.NewServer(deadlineHandler(t, u.URL, "version: 1\nupstream_timeout_ms: 200\nrules: []\n", rt, func(r transferResult) { done <- r }, obs))
 	t.Cleanup(s.Close)
 	ctr := &http.Transport{Proxy: nil, MaxConnsPerHost: 1}
 	t.Cleanup(ctr.CloseIdleConnections)
@@ -490,6 +519,10 @@ func TestKeepAliveDeadlineCleanup(t *testing.T) {
 	got := receive(t, done)
 	if !reused || res.StatusCode != 200 || string(b) != "ok" || got.outcome != "upstream_response" {
 		t.Fatal("keep-alive interrupted by stale callback/deadline", reused, got)
+	}
+	counts := snapshot(t, obs.metrics)
+	if counts.requests != 2 || counts.histogram != 2 || counts.outcomes["upstream_response"] != 2 || len(counts.upstream) != 0 || len(accessRecords(t, observabilityRead(t, reader))) != 2 {
+		t.Fatal("keep-alive observation", counts)
 	}
 }
 
@@ -744,6 +777,7 @@ func TestTransportFailureBeforeDelayedDiagnostics(t *testing.T) {
 			})
 			entered, release := make(chan struct{}), make(chan struct{})
 			var once sync.Once
+			o, reader := testObserver(t)
 			done := make(chan transferResult, 1)
 			cfg := scenario(t, "version: 1\nupstream_timeout_ms: 150\nrules: []\n")
 			engine, err := fault.New(cfg)
@@ -751,7 +785,7 @@ func TestTransportFailureBeforeDelayedDiagnostics(t *testing.T) {
 				t.Fatal(err)
 			}
 			u, _ := url.Parse("http://127.0.0.1:1")
-			h := dataHandler(u, tr, heldDiagnostics{entered, release}, engine, nil, cfg.UpstreamTimeout(), func(r transferResult) { done <- r })
+			h := dataHandler(u, tr, heldDiagnostics{entered, release}, engine, nil, cfg.UpstreamTimeout(), func(r transferResult) { done <- r }, o)
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				h.ServeHTTP(&failedLocalResponse{ResponseWriter: w, mode: mode}, r)
 			}))
@@ -787,6 +821,11 @@ func TestTransportFailureBeforeDelayedDiagnostics(t *testing.T) {
 			once.Do(func() { close(release) })
 			res := receive(t, responses)
 			got := receive(t, done)
+			observed := snapshot(t, o.metrics)
+			records := accessRecords(t, observabilityRead(t, reader))
+			if observed.requests != 1 || observed.histogram != 1 || observed.upstream["transport"] != 1 || len(observed.upstream) != 1 || observed.outcomes[got.outcome] != 1 || len(records) != 1 || records[0]["outcome"] != got.outcome {
+				t.Fatal("F02 metric/log causality", observed, records)
+			}
 			if !errors.Is(state.transport, failure) || state.failureExpiry {
 				t.Fatalf("original transport cause lost: %+v", got)
 			}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/RichardZ-code/http-fault-injection-proxy/internal/config"
 	"github.com/RichardZ-code/http-fault-injection-proxy/internal/fault"
+	"github.com/RichardZ-code/http-fault-injection-proxy/internal/logging"
+	"github.com/RichardZ-code/http-fault-injection-proxy/internal/metrics"
 )
 
 const shutdownGrace = 5 * time.Second
@@ -111,6 +114,8 @@ type Runtime struct {
 	err                                  error
 	cleanupDeadline                      time.Time
 	scenario                             config.Config
+	metrics                              *metrics.Metrics
+	observation                          *observer
 }
 
 // Start receives validated immutable startup values. Ephemeral ports are useful
@@ -129,7 +134,16 @@ func startPrepared(upstream *url.URL, listen, adminListen string, diagnostics io
 	if err != nil {
 		return nil, err
 	}
-	diagnostics = &synchronizedWriter{out: diagnostics}
+	ids := make([]string, 0, len(scenario.Rules()))
+	for _, rule := range scenario.Rules() {
+		ids = append(ids, rule.ID)
+	}
+	m, err := metrics.New(ids)
+	if err != nil {
+		return nil, err
+	}
+	logs := logging.New(diagnostics)
+	diagnostics = logs.Diagnostic("upstream transport failed")
 	data, err := net.Listen("tcp", listen)
 	if err != nil {
 		return nil, fmt.Errorf("data listener bind: %w", err)
@@ -142,6 +156,8 @@ func startPrepared(upstream *url.URL, listen, adminListen string, diagnostics io
 	u.Path, u.RawPath = "", ""
 	ctx, cancel := context.WithCancelCause(context.Background())
 	r := &Runtime{dataAddr: data.Addr(), adminAddr: admin.Addr(), dataListener: data, adminListener: admin, cancel: cancel, done: make(chan struct{}), stopRequested: make(chan struct{}), quiet: make(chan struct{}), owners: make(map[*requestOwner]struct{}), scenario: scenario}
+	r.metrics = m
+	r.observation = &observer{metrics: m, logs: logs}
 	r.connections = make(map[net.Conn]struct{})
 	r.connectionsDone = make(chan struct{})
 	r.transport = &http.Transport{
@@ -162,11 +178,11 @@ func startPrepared(upstream *url.URL, listen, adminListen string, diagnostics io
 				return context.WithValue(ctx, connectionKey{}, c.(*requestConnection))
 			},
 			ConnState: r.connectionState,
-			ErrorLog:  log.New(diagnosticWriter{diagnostics, "faultproxy: HTTP server failure"}, "", 0),
+			ErrorLog:  log.New(logs.Diagnostic("HTTP server failure"), "", 0),
 		}
 	}
-	r.data = server(dataHandler(&u, r.transport, diagnostics, engine, decisionReady, scenario.UpstreamTimeout(), nil))
-	r.admin = server(http.HandlerFunc(adminHandler))
+	r.data = server(dataHandler(&u, r.transport, diagnostics, engine, decisionReady, scenario.UpstreamTimeout(), nil, r.observation))
+	r.admin = server(adminHandler(m.Handler()))
 	if prepare != nil {
 		prepare(r)
 	}
@@ -183,6 +199,7 @@ func startPrepared(upstream *url.URL, listen, adminListen string, diagnostics io
 	go func() { results <- serveResult{"data", r.data.Serve(r.dataListener)} }()
 	go func() { results <- serveResult{"admin", r.admin.Serve(r.adminListener)} }()
 	go r.coordinate(results, grace, cleanup)
+	logs.Event(slog.LevelInfo, "runtime started")
 	return r, nil
 }
 
@@ -224,6 +241,8 @@ func (r *Runtime) track(h http.Handler) http.Handler {
 			r.mu.Unlock()
 			w.Header().Set("Connection", "close")
 			_ = http.NewResponseController(w).SetReadDeadline(time.Now())
+			// Admission stops before the data-handler observation boundary.
+			// This rejection, like parser-level rejection, is not counted.
 			localResponse(w, req, 503, "shutting down\n")
 			return
 		}
@@ -287,6 +306,7 @@ func (r *Runtime) coordinate(serves <-chan serveResult, grace, cleanup time.Dura
 		r.mu.Lock()
 		r.err = errors.Join(r.err, r.connectionErr)
 		r.mu.Unlock()
+		r.observation.logs.Event(slog.LevelInfo, "runtime stopped")
 		close(r.done)
 	}()
 	serveCount := 0

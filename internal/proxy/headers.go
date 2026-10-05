@@ -105,6 +105,9 @@ func (t trailerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	res.Body = &trailerBody{ReadCloser: res.Body, response: res, hop: hop}
 	if s, ok := r.Context().Value(transferKey{}).(*transfer); ok {
 		s.upstreamStatus = res.StatusCode
+		if res.StatusCode >= 500 && res.StatusCode <= 599 {
+			s.events[0] = true
+		}
 		res.Body = &observedBody{ReadCloser: res.Body, s: s}
 	}
 	return res, nil

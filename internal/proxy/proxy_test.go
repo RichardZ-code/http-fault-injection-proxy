@@ -397,8 +397,8 @@ func TestTransportFailureAndCancellation(t *testing.T) {
 	address := occupied.Addr().String()
 	_ = occupied.Close()
 	u, _ := url.Parse("http://" + address)
-	var diagnostics bytes.Buffer
-	r, err := Start(u, "127.0.0.1:0", "127.0.0.1:0", &diagnostics, scenario(t, ""))
+	reader, writer := observabilityPipe(t)
+	r, err := Start(u, "127.0.0.1:0", "127.0.0.1:0", writer, scenario(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,8 +410,9 @@ func TestTransportFailureAndCancellation(t *testing.T) {
 	if res.StatusCode != 502 || string(b) != "bad gateway\n" || res.Header.Get(injectedHeader) != "" {
 		t.Fatalf("transport: %d %q", res.StatusCode, b)
 	}
-	if diagnostics.String() != "faultproxy: upstream connection failed\n" {
-		t.Fatalf("unsanitized or missing diagnostic: %q", diagnostics.String())
+	diagnostics := observabilityRead(t, reader)
+	if !strings.Contains(string(diagnostics), `"msg":"upstream transport failed"`) || strings.Contains(string(diagnostics), "private=query") {
+		t.Fatalf("unsanitized or missing diagnostic: %q", diagnostics)
 	}
 	res, b = request(t, c, newRequest(t, "GET", "http://"+r.AdminAddr().String()+"/healthz", nil))
 	if res.StatusCode != 200 || string(b) != "ok\n" {
@@ -469,10 +470,10 @@ func TestAdminIsolationAndConcurrency(t *testing.T) {
 		body         string
 	}{
 		{"GET", "/healthz", 200, "ok\n"}, {"HEAD", "/healthz", 200, ""}, {"POST", "/healthz", 405, "method not allowed\n"},
-		{"GET", "/unknown", 404, "not found\n"}, {"GET", "//healthz", 404, "not found\n"}, {"GET", "/metrics", 503, "metrics not implemented yet\n"}, {"POST", "/metrics", 405, "method not allowed\n"},
+		{"GET", "/unknown", 404, "not found\n"}, {"GET", "//healthz", 404, "not found\n"}, {"GET", "/metrics", 200, ""}, {"POST", "/metrics", 405, "method not allowed\n"},
 	} {
 		res, b := request(t, c, newRequest(t, tc.method, "http://"+r.AdminAddr().String()+tc.path, nil))
-		if res.StatusCode != tc.status || string(b) != tc.body || res.Header.Get("Content-Type") != "text/plain; charset=utf-8" {
+		if res.StatusCode != tc.status || string(b) != tc.body || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/plain;") {
 			t.Fatalf("admin %s %s: %d %q", tc.method, tc.path, res.StatusCode, b)
 		}
 	}

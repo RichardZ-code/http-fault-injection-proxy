@@ -102,10 +102,22 @@ func fullStderrPipe(t *testing.T) (*os.File, *os.File, int) {
 func TestExecutableUndrainedStderrShutdown(t *testing.T) {
 	binary := buildExecutable(t)
 	_, writer, filled := fullStderrPipe(t)
-	// No reader runs before exit; exec inherits the pipe as actual stderr.
+	// No reader runs before exit; exec inherits explicitly blocking actual stderr.
+	raw, _ := writer.SyscallConn()
+	raw.Control(func(fd uintptr) {
+		if err := syscall.SetNonblock(int(fd), false); err != nil {
+			t.Error(err)
+		}
+	})
 	entered := make(chan struct{})
+	holding := make(chan struct{})
 	u := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)
+		if r.URL.Path == "/hold" {
+			close(holding)
+			<-r.Context().Done()
+			return
+		}
 		close(entered)
 		panic(http.ErrAbortHandler) // A real connection fails before headers.
 	}))
@@ -135,6 +147,26 @@ func TestExecutableUndrainedStderrShutdown(t *testing.T) {
 	}()
 	t.Cleanup(func() { cancel(); event(t, joined) })
 	event(t, entered)
+	event(t, joined) // The transport failure and metrics must finish despite log loss.
+	metricsResponse, err := c.Get("http://" + a + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := io.ReadAll(metricsResponse.Body)
+	metricsResponse.Body.Close()
+	if err != nil || !bytes.Contains(payload, []byte(`outcome="transport_error"`)) {
+		t.Fatal("transport metric lost behind stderr", string(payload), err)
+	}
+	held := make(chan struct{})
+	go func() {
+		defer close(held)
+		res, _ := c.Get("http://" + d + "/hold")
+		if res != nil {
+			res.Body.Close()
+		}
+	}()
+	t.Cleanup(func() { event(t, held) })
+	event(t, holding)
 	began := time.Now()
 	child.signal(t, syscall.SIGTERM)
 	stoppedAdmission(t, d, a)
@@ -144,8 +176,9 @@ func TestExecutableUndrainedStderrShutdown(t *testing.T) {
 		t.Fatalf("undrained stderr extended stop policy: %s", elapsed)
 	}
 	event(t, joined)
+	event(t, held)
 	assertRebind(t, d, a)
-	t.Logf("stderr held full (%d bytes) and never drained; real upstream connection failure; SIGTERM exit 1 in %s; ports released", filled, elapsed)
+	t.Logf("stderr held full (%d bytes) and never drained; real upstream connection failure metric observed; active forwarding forced by SIGTERM; exit 1 in %s; child reaped and ports released", filled, elapsed)
 }
 
 func TestTerminalDiagnosticSharedDescriptor(t *testing.T) {

@@ -33,6 +33,7 @@ type transfer struct {
 	failureRecorded, failureExpiry             bool
 	downstream, bodyRead, bodyClose, transport error
 	upstreamStatus                             int
+	events                                     [4]bool
 	stop                                       func() bool
 	callbackDone                               chan struct{}
 	dialMu                                     sync.Mutex
@@ -44,6 +45,7 @@ type transfer struct {
 type transferResult struct {
 	status, upstreamStatus int
 	outcome, cause         string
+	events                 [4]bool
 }
 
 func newTransfer(parent context.Context, baseline time.Time, timeout time.Duration, w http.ResponseWriter) (*transfer, context.CancelFunc) {
@@ -212,7 +214,7 @@ func (b *observedBody) Close() error {
 }
 
 func (s *transfer) result() transferResult {
-	r := transferResult{status: s.status, upstreamStatus: s.upstreamStatus}
+	r := transferResult{status: s.status, upstreamStatus: s.upstreamStatus, events: s.events}
 	switch {
 	case forced(s.parent):
 		r.outcome, r.cause = "shutdown_cancelled", "shutdown"
@@ -231,10 +233,13 @@ func (s *transfer) result() transferResult {
 		r.outcome, r.cause = "incomplete_response", "body_read"
 	case s.upstreamStatus == 0:
 		r.outcome, r.cause = "internal_error", "internal"
-	case s.upstreamStatus >= 500:
+	case s.upstreamStatus >= 500 && s.upstreamStatus <= 599:
 		r.outcome, r.cause = "upstream_http_error", "http_5xx"
 	default:
 		r.outcome, r.cause = "upstream_response", "none"
+	}
+	if r.cause == "forwarding_deadline" {
+		r.events[2] = true
 	}
 	return r
 }
@@ -259,6 +264,17 @@ func (s *transfer) recordFailure(kind string, err error) {
 		var timeout net.Error
 		s.failureExpiry = errors.Is(s.ctx.Err(), context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() && !time.Now().Before(s.deadline)
 		s.failureRecorded = true
+	}
+	// Capture upstream events at the failing operation, before diagnostics or
+	// cleanup. Later delivery failure must not erase an earlier transport event.
+	if !forced(s.parent) && !clientCancellation(s.parent) && s.downstream == nil && context.Cause(s.ctx) != errDownstream {
+		if s.failureExpiry {
+			s.events[2] = true
+		} else if kind == "transport" {
+			s.events[1] = true
+		} else if kind == "body_read" || kind == "body_close" {
+			s.events[3] = true
+		}
 	}
 	switch kind {
 	case "downstream":

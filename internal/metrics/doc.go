@@ -1,3 +1,3 @@
-// Package metrics is reserved for later application observations.
-// P02 exercises only dependency compatibility in an isolated test registry.
+// Package metrics owns the four bounded application metric families and their
+// private registry. It never registers with the global default registry.
 package metrics

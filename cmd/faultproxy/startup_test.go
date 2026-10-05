@@ -235,9 +235,16 @@ func TestExecutableBindFailure(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, binary, startupArgs("http://unresolved.invalid", path, d, a)...)
 			cmd.Dir, cmd.Env = t.TempDir(), executableEnv()
-			output, err := cmd.CombinedOutput()
+			reader, writer := nonblockingStderrPipe(t)
+			cmd.Stderr = writer
+			err := cmd.Run()
+			writer.Close()
+			output, readErr := io.ReadAll(reader)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
 			var exit *exec.ExitError
-			if ctx.Err() != nil || !errors.As(err, &exit) || exit.ExitCode() != 1 || !bytes.Contains(output, []byte("listener bind")) {
+			if ctx.Err() != nil || !errors.As(err, &exit) || exit.ExitCode() != 1 || !bytes.Contains(output, []byte(`"msg":"startup failed"`)) {
 				t.Fatalf("bind failure err=%v deadline=%v output=%q", err, ctx.Err(), output)
 			}
 			data.Close()

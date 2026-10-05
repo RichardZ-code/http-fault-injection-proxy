@@ -54,11 +54,7 @@ func TestFaultSerialAndAdmin(t *testing.T) {
 	for i := 1; i <= 30; i++ {
 		for _, path := range []string{"/healthz", "/metrics"} {
 			res, _ := request(t, c, newRequest(t, "GET", "http://"+r.AdminAddr().String()+path, nil))
-			want := 200
-			if path == "/metrics" {
-				want = 503
-			}
-			if res.StatusCode != want {
+			if res.StatusCode != 200 {
 				t.Fatal(res.StatusCode)
 			}
 		}
@@ -377,7 +373,8 @@ func TestFaultCancelledDelay(t *testing.T) {
 			finished := make(chan struct{}, 1)
 			tr := &http.Transport{Proxy: nil}
 			t.Cleanup(tr.CloseIdleConnections)
-			h := dataHandler(parsed, tr, io.Discard, engine, func(d fault.Decision) { started <- d }, 2*time.Second, nil)
+			obs, reader := testObserver(t, "coin")
+			h := dataHandler(parsed, tr, io.Discard, engine, func(d fault.Decision) { started <- d }, 2*time.Second, nil, obs)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				defer func() { finished <- struct{}{} }()
 				h.ServeHTTP(w, r)
@@ -407,6 +404,14 @@ func TestFaultCancelledDelay(t *testing.T) {
 				t.Fatal(err)
 			}
 			receive(t, finished) // Handler completion, not merely client cancellation.
+			counts := snapshot(t, obs.metrics)
+			records := accessRecords(t, observabilityRead(t, reader))
+			if counts.requests != 1 || counts.histogram != 1 || counts.outcomes["client_cancelled"] != 1 || counts.actions["delay"] != 1 || counts.actions["status"] != 0 || len(counts.upstream) != 0 {
+				t.Fatal("cancelled action accounting", counts)
+			}
+			if len(records) != 1 || records[0]["sent_status"] != nil || records[0]["outcome"] != "client_cancelled" || records[0]["sequence"] != float64(1) {
+				t.Fatal("cancelled access record", records)
+			}
 			if calls.Load() != 0 {
 				t.Fatal("cancelled delay contacted upstream")
 			}

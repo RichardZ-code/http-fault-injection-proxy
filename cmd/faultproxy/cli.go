@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"runtime"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/RichardZ-code/http-fault-injection-proxy/internal/config"
+	"github.com/RichardZ-code/http-fault-injection-proxy/internal/logging"
 	"github.com/RichardZ-code/http-fault-injection-proxy/internal/proxy"
 )
 
@@ -152,7 +155,7 @@ func run(args []string, lookup func(string) (string, bool), stdout, stderr io.Wr
 	defer signal.Stop(signals)
 	r, err := proxy.Start(upstream, o.Listen, o.AdminListen, stderr, scenario)
 	if err != nil {
-		fmt.Fprintln(stderr, "faultproxy:", err)
+		logging.New(stderr).Event(slog.LevelError, "startup failed")
 		return 1
 	}
 	select {
@@ -162,7 +165,16 @@ func run(args []string, lookup func(string) (string, bool), stdout, stderr io.Wr
 		err = r.Wait()
 	}
 	if err != nil {
-		terminalDiagnostic(stderr, err, r.CleanupDeadline())
+		// Keep the genuine runtime error for the exit result, but never print its
+		// arbitrary network/address text. Terminal output retains the F01 bound.
+		message := errors.New("runtime shutdown failed")
+		if errors.Is(err, proxy.ErrForcedShutdown) {
+			message = proxy.ErrForcedShutdown
+		}
+		if errors.Is(err, proxy.ErrCleanupTimeout) {
+			message = errors.Join(message, proxy.ErrCleanupTimeout)
+		}
+		terminalDiagnostic(stderr, message, r.CleanupDeadline())
 		return 1
 	}
 	return 0
@@ -170,7 +182,7 @@ func run(args []string, lookup func(string) (string, bool), stdout, stderr io.Wr
 
 // Already nonblocking native terminal output gets one attempt within the cleanup
 // time left. Never change shared status flags, start a writer goroutine or wait
-// for a blocked sink. Ordinary runtime diagnostics can exhaust cleanup and
+// for a blocked sink. Runtime cleanup may exhaust its deadline and
 // produce a failure exit; this final message must not prevent that exit.
 func terminalDiagnostic(w io.Writer, err error, deadline time.Time) {
 	terminalDiagnosticWrite(w, err, deadline, syscall.Write)
@@ -181,38 +193,11 @@ func terminalDiagnosticWrite(w io.Writer, err error, deadline time.Time, write f
 	if !time.Now().Before(deadline) {
 		return
 	}
-	f, ok := w.(*os.File)
-	if !ok {
-		return // An arbitrary Writer has no nonblocking guarantee.
-	}
-	raw, e := f.SyscallConn()
-	if e != nil {
-		return
-	}
 	message := []byte(fmt.Sprintln("faultproxy:", err))
-	// Stay within the POSIX minimum atomic pipe-write bound.
 	if len(message) > 512 {
 		message = append(message[:511], '\n')
 	}
-	_ = raw.Control(func(fd uintptr) {
-		if !time.Now().Before(deadline) {
-			return
-		}
-		var st syscall.Stat_t
-		if syscall.Fstat(int(fd), &st) != nil {
-			return
-		}
-		switch st.Mode & syscall.S_IFMT {
-		case syscall.S_IFIFO, syscall.S_IFSOCK, syscall.S_IFCHR:
-		default:
-			return // O_NONBLOCK does not bound regular-file I/O.
-		}
-		flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
-		if errno != 0 || flags&syscall.O_NONBLOCK == 0 {
-			return
-		}
-		_, _ = write(int(fd), message) // Drop on EAGAIN/error/short write.
-	})
+	logging.WriteOnce(w, message, deadline, write)
 }
 
 func sourceIdentity(info *debug.BuildInfo) string {

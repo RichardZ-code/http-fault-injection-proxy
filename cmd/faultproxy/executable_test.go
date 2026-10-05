@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-func TestExecutableBoundary(t *testing.T) {
+func buildExecutable(t *testing.T) string {
+	t.Helper()
 	binary := filepath.Join(t.TempDir(), "faultproxy")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -21,7 +22,11 @@ func TestExecutableBoundary(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	// The child is an ordinary build even when this test runs under -race.
+	return binary
+}
+
+func executableEnv() []string {
+	// The child is an ordinary build even when its parent runs under -race.
 	var childEnv []string
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
@@ -32,6 +37,12 @@ func TestExecutableBoundary(t *testing.T) {
 		childEnv = append(childEnv, entry)
 	}
 	childEnv = append(childEnv, "PATH=", "UPSTREAM_URL=invalid", "CONFIG_PATH=")
+	return childEnv
+}
+
+func TestExecutableBoundary(t *testing.T) {
+	binary := buildExecutable(t)
+	childEnv := executableEnv()
 	outside := t.TempDir()
 	for _, tc := range []struct {
 		name string
@@ -42,7 +53,7 @@ func TestExecutableBoundary(t *testing.T) {
 		{"help", []string{"--help"}, 0, "Usage: faultproxy"},
 		{"version", []string{"--version"}, 0, "faultproxy dev commit="},
 		{"invalid", []string{"--unknown"}, 2, "unknown option"},
-		{"run", []string{"--upstream=http://unresolved.invalid", "--config=missing.yaml"}, 1, "HTTP proxy execution is not implemented yet"},
+		{"run", []string{"--upstream=http://unresolved.invalid", "--config=missing.yaml"}, 2, "config requires a readable regular file"},
 		{"check", []string{"--check-config", "--upstream=http://unresolved.invalid", "--config=missing.yaml"}, 1, "config-check is not implemented yet"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,6 +1,6 @@
 # Proposed v0.1.0 behavior contract
 
-Status: P01 proposal awaiting user acceptance and targeted closure confirmation of the supplied independent review finding. Nothing in this document establishes implemented functionality or runtime evidence. All interfaces, examples, layouts, and verification below are planned.
+Status: P01 was accepted with the final-flush correction. This document defines the accepted target contract and the user-approved temporary P03 startup contract below. Implementation evidence is recorded separately in [progress](progress.md); planned later-phase behavior is not a runtime claim.
 
 ## 1. Authority, purpose, and scope
 
@@ -81,6 +81,21 @@ Help prints usage to stdout. Version prints `faultproxy <version> commit=<source
 | 1 | Listener bind/startup failure, unexpected server/runtime failure, forced shutdown, or cleanup failure |
 
 A missing config file is an error. Explicit `rules: []` is pass-through. Validate all supported configuration before binding. Acquire both listeners before serving; close the first if the second bind fails. Close both if later startup fails. Early P02 entry points reject unavailable config/fault functionality explicitly with exit 1 rather than accepting and ignoring it; full successful config-check remains gated on its implemented validation extent.
+
+### Temporary P03 startup contract
+
+The user approved one strictly validated P03 startup subset:
+
+```yaml
+version: 1
+rules: []
+```
+
+Both fields are required; version is the unquoted decimal integer 1 and rules is an explicit empty sequence. Field order, comments, quoted string keys and flow collections follow the applicable YAML subset below. Reject unknown/duplicate fields, optional `seed`/`upstream_timeout_ms` even at their eventual defaults, nonempty rules, null/coerced values, malformed YAML and multiple documents (including an empty second document). Apply the 1 MiB cap+1 file read, UTF-8, parser depth 8, node-count 10,000, and restricted YAML feature checks. Requested input must be a readable regular file; file/read/close failures reject startup. Diagnostics omit raw parser text, contents and file paths. All option/upstream/listener validation and config admission finish before either listener binds. Validation failures exit 2; bind/runtime failures exit 1.
+
+Valid startup connects to the production fixed-upstream pass-through runtime. Full `--check-config` remains explicitly unavailable with exit 1 after pure option checks, without file certification or listener/network activity. This subset does not apply the future forwarding-timeout default: whole-transfer deadlines, checked final flush and retained finalization deadlines, signal-driven graceful shutdown, and terminal observations remain P05/P06 work. Complete fault configuration and decisions remain P04 work.
+
+P04 must replace this temporary validator with the accepted full schema in section 4, enabling its optional settings and nonempty rules with their contracted effects. Do not preserve a second configuration mode, bypass flag, alternate format or parallel subset validator. The eventual full schema still accepts explicit empty rules; P03's restrictions are a phase boundary, not a second product interface.
 
 ## 4. Strict YAML and resources
 

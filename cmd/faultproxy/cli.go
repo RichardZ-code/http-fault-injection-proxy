@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/RichardZ-code/http-fault-injection-proxy/internal/config"
+	"github.com/RichardZ-code/http-fault-injection-proxy/internal/proxy"
 )
 
 const usage = `Usage: faultproxy [options]
@@ -16,10 +17,10 @@ const usage = `Usage: faultproxy [options]
 Working actions:
   --help                 Show this help without runtime configuration
   --version              Show development identity and build Go version
+  (default run action)   Pass-through with only version: 1 and rules: []
 
 Recognized, unavailable actions:
   --check-config         Full scenario validation is not implemented yet
-  (default run action)   HTTP proxy execution is not implemented yet
 
 Options (flags override present environment values, including empty values):
   --upstream URL         Required HTTP origin; UPSTREAM_URL
@@ -29,7 +30,9 @@ Options (flags override present environment values, including empty values):
 
 Use long flags once each. Boolean modes accept --flag or --flag=true/false.
 Only one mode may be true. No positional arguments are accepted.
-Exit codes: 0 help/version; 2 invalid usage/options; 1 unavailable action.
+P03 rejects all other config fields/rules. P04 replaces this temporary subset.
+Forwarding deadlines, checked final flush and graceful shutdown remain P05 work.
+Exit codes: 0 help/version; 2 invalid usage/options/config; 1 unavailable/runtime failure.
 `
 
 type arguments struct {
@@ -128,16 +131,30 @@ func run(args []string, lookup func(string) (string, bool), stdout, stderr io.Wr
 		fmt.Fprintf(stdout, "faultproxy dev commit=%s go=%s\n", sourceIdentity(info), runtime.Version())
 		return 0
 	}
-	if err := resolve(a, lookup).Validate(); err != nil {
+	o := resolve(a, lookup)
+	upstream, err := o.ValidatedUpstream()
+	if err != nil {
 		fmt.Fprintln(stderr, "faultproxy:", err)
 		return 2
 	}
 	if a.check {
 		fmt.Fprintln(stderr, "faultproxy: config-check is not implemented yet; no scenario validation was performed")
-	} else {
-		fmt.Fprintln(stderr, "faultproxy: HTTP proxy execution is not implemented yet")
+		return 1
 	}
-	return 1
+	if err := config.ValidatePassThrough(o.Path); err != nil {
+		fmt.Fprintln(stderr, "faultproxy:", err)
+		return 2
+	}
+	r, err := proxy.Start(upstream, o.Listen, o.AdminListen, stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, "faultproxy:", err)
+		return 1
+	}
+	if err := r.Wait(); err != nil {
+		fmt.Fprintln(stderr, "faultproxy:", err)
+		return 1
+	}
+	return 0
 }
 
 func sourceIdentity(info *debug.BuildInfo) string {

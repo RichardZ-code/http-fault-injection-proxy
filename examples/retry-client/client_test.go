@@ -234,6 +234,35 @@ func TestRetryTransportFailureAndReuse(t *testing.T) {
 	}
 }
 
+func TestRetryCompleteBodyConnectionOwnership(t *testing.T) {
+	parent := make(chan context.Context, 1)
+	release := make(chan struct{})
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parent <- r.Context()
+		w.Header().Set("Content-Length", "7")
+		io.WriteString(w, "healthy")
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Error(err)
+		}
+		<-release
+	}))
+	t.Cleanup(s.Close)
+	t.Cleanup(func() { close(release) })
+	c, tr := newClient()
+	t.Cleanup(tr.CloseIdleConnections)
+	r := operate(context.Background(), c, s.URL, 1, defaultPolicy("retry"))
+	if r.Outcome != "success" || r.Attempts != 1 {
+		t.Fatal("client did not consume the complete response", r)
+	}
+	ctx := <-parent
+	if ctx.Err() != nil {
+		t.Fatal("completed body/attempt cleanup closed the idle connection", r, ctx.Err())
+	}
+	tr.CloseIdleConnections() // The executable does this on exit, after encoding.
+	await(t, ctx.Done())
+	t.Log("complete fixed-length body survived attempt/operation cancellation; explicit transport close cancelled the server request")
+}
+
 func TestRetryProductionProxyCohorts(t *testing.T) {
 	for _, mode := range []string{"none", "retry"} {
 		t.Run(mode, func(t *testing.T) {

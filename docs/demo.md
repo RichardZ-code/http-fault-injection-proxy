@@ -12,7 +12,7 @@ go build -o bin/retry-client ./examples/retry-client
 python3 scripts/demo.py
 ```
 
-The script allocates free loopback ports and launches the production binaries and Python capture helper from a clean temporary directory. It uses no private local paths or unpublished image. Each cohort owns its fixture/proxy state. Readiness uses isolated health routes, and data connections remain live through terminal reconciliation before closure.
+The script allocates free loopback ports and launches the production binaries and Python capture helper from a clean temporary directory. It uses no private local paths or unpublished image. Each cohort owns its fixture/proxy state. Readiness uses isolated health routes. Python-owned data connections remain live through terminal reconciliation before closure. The retry executable closes its reusable transport on exit; the fixture's `/ok` response therefore uses chunked HTTP/1.1 framing. Its terminal chunk follows proxy handler return, after checked final flush and terminal observation, so bounded complete consumption precedes executable teardown without racing that observation. Synthetic responses remain buffered local responses. No retry or forwarding deadline is extended, and genuine cancellation/incomplete framing still fails the applicable assertions.
 
 | Sequence | Expected observable behavior |
 | --- | --- |

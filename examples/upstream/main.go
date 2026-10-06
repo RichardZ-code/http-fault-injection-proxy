@@ -85,7 +85,14 @@ func (f *fixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			panic(http.ErrAbortHandler) // Abort chunk framing, never a new status.
 		}
 		io.WriteString(w, "fixture ok\n")
-	default:
+	case "/ok":
+		// The retry demo's client exits after body completion. Chunk framing
+		// completes only after the proxy observes its terminal outcome and
+		// returns, so client teardown cannot precede that boundary.
+		// Keep the measured /benchmark response fixed-length and unchanged.
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			return
+		}
 		io.WriteString(w, "fixture ok\n")
 	}
 }

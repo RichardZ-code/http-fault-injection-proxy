@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -23,6 +26,166 @@ type demoFlushBarrier struct {
 	http.ResponseWriter
 	flushed chan error
 	release <-chan struct{}
+}
+
+type demoClosedBody struct {
+	io.ReadCloser
+	closed atomic.Bool
+}
+
+func (b *demoClosedBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.closed.Store(true)
+	return err
+}
+
+type retryDemoFlushBarrier struct {
+	http.ResponseWriter
+	body    *demoClosedBody
+	flushed chan error
+	release <-chan struct{}
+}
+
+func (w *retryDemoFlushBarrier) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *retryDemoFlushBarrier) FlushError() error {
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	// Streaming copy flushes precede Body.Close. Hold only the checked final
+	// flush, after all body bytes are available but before terminal observation.
+	if w.body.closed.Load() {
+		w.flushed <- err
+		<-w.release
+	}
+	return err
+}
+
+func TestRetryDemoTerminalFraming(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "retry-client")
+	buildContext, cancelBuild := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancelBuild()
+	build := exec.CommandContext(buildContext, "go", "build", "-o", binary, "../../examples/retry-client")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatal(err, string(output))
+	}
+	for _, mode := range []string{"fixed-length-exit", "chunked-complete", "chunked-cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			release := make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			t.Cleanup(unblock)
+			body := &demoClosedBody{ReadCloser: io.NopCloser(strings.NewReader("healthy"))}
+			flushed := make(chan error, 1)
+			parents := make(chan context.Context, 1)
+			done := make(chan transferResult, 1)
+			returned := make(chan struct{})
+			o, reader := testObserver(t)
+			transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				length, header := int64(-1), http.Header{}
+				if mode == "fixed-length-exit" {
+					length, header = 7, http.Header{"Content-Length": {"7"}}
+				}
+				return &http.Response{StatusCode: 200, Header: header, Body: body, ContentLength: length}, nil
+			})
+			h := deadlineHandler(t, "http://fixture.invalid", "version: 1\nupstream_timeout_ms: 10000\nrules: []\n", transport, func(r transferResult) { done <- r }, o)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer close(returned)
+				parents <- r.Context()
+				h.ServeHTTP(&retryDemoFlushBarrier{w, body, flushed, release}, r)
+			}))
+			t.Cleanup(func() { unblock(); server.Close() })
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			cmd := exec.CommandContext(ctx, binary, "--url="+server.URL, "--mode=retry", "--operations=1")
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var diagnostics strings.Builder
+			cmd.Stderr = &diagnostics
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			reaped := false
+			t.Cleanup(func() {
+				unblock()
+				cancel()
+				if !reaped {
+					cmd.Wait() // A teardown kill never satisfies an assertion.
+				}
+			})
+			type operation struct {
+				Status   int    `json:"status"`
+				Outcome  string `json:"outcome"`
+				Attempts int    `json:"attempts"`
+			}
+			records := make(chan operation, 1)
+			decodeErrors := make(chan error, 1)
+			go func() {
+				var r operation
+				decodeErrors <- json.NewDecoder(stdout).Decode(&r)
+				records <- r
+			}()
+			if err := receive(t, flushed); err != nil {
+				t.Fatal("checked native flush", err)
+			}
+			parent := receive(t, parents)
+			want, cause, clientOutcome, exit := "upstream_response", "none", "success", 0
+			if mode == "fixed-length-exit" {
+				if err := receive(t, decodeErrors); err != nil {
+					t.Fatal(err)
+				}
+				r := receive(t, records)
+				if r.Status != 200 || r.Outcome != "success" || r.Attempts != 1 {
+					t.Fatal("client did not consume complete fixed-length response", r)
+				}
+				if err := cmd.Wait(); err != nil {
+					t.Fatal(err, diagnostics.String())
+				}
+				reaped = true
+				receive(t, parent.Done())
+				want, cause = "client_cancelled", "client"
+			} else if mode == "chunked-cancel" {
+				if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+					t.Fatal(err)
+				}
+				receive(t, parent.Done())
+				want, cause, clientOutcome, exit = "client_cancelled", "client", "cancelled", 1
+			} else {
+				if parent.Err() != nil {
+					t.Fatal("chunked client closed before terminal framing")
+				}
+				select {
+				case err := <-decodeErrors:
+					t.Fatal("client completed before server-finalized chunk framing", err)
+				default:
+				}
+			}
+			if snapshot(t, o.metrics).requests != 0 {
+				t.Fatal("terminal publication preceded the checked flush")
+			}
+			unblock()
+			r := receive(t, done)
+			receive(t, returned)
+			if !reaped {
+				if err := receive(t, decodeErrors); err != nil {
+					t.Fatal(err)
+				}
+				op := receive(t, records)
+				if op.Outcome != clientOutcome || op.Attempts != 1 || exit == 0 && op.Status != 200 {
+					t.Fatal("client framing/cancellation result", op)
+				}
+				err := cmd.Wait()
+				reaped = true
+				if err != nil && exit == 0 || exit != 0 && (err == nil || cmd.ProcessState.ExitCode() != exit) {
+					t.Fatal("client exit", err, diagnostics.String())
+				}
+			}
+			counts := snapshot(t, o.metrics)
+			logs := accessRecords(t, observabilityRead(t, reader))
+			if r.status != 200 || r.outcome != want || r.cause != cause || counts.requests != 1 || counts.histogram != 1 || counts.outcomes[want] != 1 || len(counts.upstream) != 0 || len(logs) != 1 || logs[0]["outcome"] != want || logs[0]["cause"] != cause {
+				t.Fatal("handler completion, metrics and logs", r, counts, logs)
+			}
+			t.Logf("%s: client exit=%d; handler=%s/%s; checked flush held before observation; child reaped", mode, exit, r.outcome, r.cause)
+		})
+	}
 }
 
 func (w *demoFlushBarrier) Unwrap() http.ResponseWriter { return w.ResponseWriter }

@@ -66,6 +66,9 @@ func TestFixtureRoutesAndCounts(t *testing.T) {
 		if err != nil || res.StatusCode != tc.status || string(b) != tc.body || res.Header.Get("Content-Type") != "text/plain; charset=utf-8" {
 			t.Fatalf("%s: %d %q %v", tc.path, res.StatusCode, b, err)
 		}
+		if tc.path == "/ok" && (res.ContentLength != -1 || len(res.TransferEncoding) != 1 || res.TransferEncoding[0] != "chunked") {
+			t.Fatal("demo completion must consume server-finalized chunk framing", res.ContentLength, res.TransferEncoding)
+		}
 	}
 	res, err := s.Client().Get(s.URL + "/stats")
 	if err != nil {

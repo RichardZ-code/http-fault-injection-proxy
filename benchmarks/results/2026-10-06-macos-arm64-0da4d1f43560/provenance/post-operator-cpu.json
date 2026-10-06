@@ -1,0 +1,230 @@
+[
+  {
+    "legacy": [],
+    "top": [
+      {
+        "command": "Google Chrome Helper (Renderer)",
+        "cpu_percent": 56.0,
+        "cpu_time": "0:50.85",
+        "pid": "desktop-process-006",
+        "ppid": "desktop-process-007"
+      },
+      {
+        "command": "Codex (Renderer)",
+        "cpu_percent": 31.4,
+        "cpu_time": "83:01.23",
+        "pid": "desktop-process-008",
+        "ppid": "desktop-process-009"
+      },
+      {
+        "command": "WindowServer",
+        "cpu_percent": 21.6,
+        "cpu_time": "896:11.54",
+        "pid": "desktop-process-010",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "Python",
+        "cpu_percent": 10.2,
+        "cpu_time": "0:00.07",
+        "pid": "desktop-process-011",
+        "ppid": "desktop-process-012"
+      },
+      {
+        "command": "coreaudiod",
+        "cpu_percent": 8.8,
+        "cpu_time": "185:48.63",
+        "pid": "desktop-process-013",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "codex",
+        "cpu_percent": 7.4,
+        "cpu_time": "6:35.61",
+        "pid": "desktop-process-012",
+        "ppid": "desktop-process-009"
+      },
+      {
+        "command": "Google Chrome Helper",
+        "cpu_percent": 5.6,
+        "cpu_time": "37:49.21",
+        "pid": "desktop-process-014",
+        "ppid": "desktop-process-007"
+      },
+      {
+        "command": "com.apple.DriverKit-AppleBCMWLAN",
+        "cpu_percent": 1.5,
+        "cpu_time": "38:06.05",
+        "pid": "desktop-process-015",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "Codex (Service)",
+        "cpu_percent": 1.2,
+        "cpu_time": "30:00.26",
+        "pid": "desktop-process-016",
+        "ppid": "desktop-process-009"
+      },
+      {
+        "command": "corespeechd",
+        "cpu_percent": 1.0,
+        "cpu_time": "32:43.97",
+        "pid": "desktop-process-017",
+        "ppid": "desktop-process-003"
+      }
+    ],
+    "utc": "2026-10-06T05:18:07.504436+00:00"
+  },
+  {
+    "legacy": [],
+    "top": [
+      {
+        "command": "Google Chrome Helper (Renderer)",
+        "cpu_percent": 37.1,
+        "cpu_time": "0:52.46",
+        "pid": "desktop-process-006",
+        "ppid": "desktop-process-007"
+      },
+      {
+        "command": "WindowServer",
+        "cpu_percent": 26.8,
+        "cpu_time": "896:12.67",
+        "pid": "desktop-process-010",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "coreaudiod",
+        "cpu_percent": 10.2,
+        "cpu_time": "185:49.10",
+        "pid": "desktop-process-013",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "Google Chrome Helper",
+        "cpu_percent": 5.7,
+        "cpu_time": "37:49.54",
+        "pid": "desktop-process-014",
+        "ppid": "desktop-process-007"
+      },
+      {
+        "command": "mdworker_shared",
+        "cpu_percent": 1.8,
+        "cpu_time": "0:00.10",
+        "pid": "desktop-process-018",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "VTDecoderXPCService",
+        "cpu_percent": 1.0,
+        "cpu_time": "0:01.73",
+        "pid": "desktop-process-019",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "corespeechd",
+        "cpu_percent": 0.7,
+        "cpu_time": "32:44.04",
+        "pid": "desktop-process-017",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "Codex (Service)",
+        "cpu_percent": 0.7,
+        "cpu_time": "30:00.30",
+        "pid": "desktop-process-016",
+        "ppid": "desktop-process-009"
+      },
+      {
+        "command": "Codex (Renderer)",
+        "cpu_percent": 0.6,
+        "cpu_time": "83:02.30",
+        "pid": "desktop-process-008",
+        "ppid": "desktop-process-009"
+      },
+      {
+        "command": "locationd",
+        "cpu_percent": 0.5,
+        "cpu_time": "24:21.71",
+        "pid": "desktop-process-020",
+        "ppid": "desktop-process-003"
+      }
+    ],
+    "utc": "2026-10-06T05:18:12.559114+00:00"
+  },
+  {
+    "legacy": [],
+    "top": [
+      {
+        "command": "Google Chrome Helper (Renderer)",
+        "cpu_percent": 73.3,
+        "cpu_time": "0:54.15",
+        "pid": "desktop-process-006",
+        "ppid": "desktop-process-007"
+      },
+      {
+        "command": "WindowServer",
+        "cpu_percent": 19.6,
+        "cpu_time": "896:13.78",
+        "pid": "desktop-process-010",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "coreaudiod",
+        "cpu_percent": 9.2,
+        "cpu_time": "185:49.58",
+        "pid": "desktop-process-013",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "Google Chrome Helper",
+        "cpu_percent": 5.8,
+        "cpu_time": "37:49.86",
+        "pid": "desktop-process-014",
+        "ppid": "desktop-process-007"
+      },
+      {
+        "command": "duetexpertd",
+        "cpu_percent": 1.2,
+        "cpu_time": "15:13.82",
+        "pid": "desktop-process-021",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "corespeechd",
+        "cpu_percent": 0.7,
+        "cpu_time": "32:44.12",
+        "pid": "desktop-process-017",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "com.apple.DriverKit-AppleBCMWLAN",
+        "cpu_percent": 0.4,
+        "cpu_time": "38:06.11",
+        "pid": "desktop-process-015",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "Codex (Renderer)",
+        "cpu_percent": 0.4,
+        "cpu_time": "83:02.33",
+        "pid": "desktop-process-008",
+        "ppid": "desktop-process-009"
+      },
+      {
+        "command": "VTDecoderXPCService",
+        "cpu_percent": 0.4,
+        "cpu_time": "0:01.79",
+        "pid": "desktop-process-019",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "command": "Microsoft Outlook",
+        "cpu_percent": 0.3,
+        "cpu_time": "29:18.22",
+        "pid": "desktop-process-022",
+        "ppid": "desktop-process-003"
+      }
+    ],
+    "utc": "2026-10-06T05:18:17.611159+00:00"
+  }
+]

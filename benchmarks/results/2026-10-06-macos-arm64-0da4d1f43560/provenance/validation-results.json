@@ -1,0 +1,15 @@
+{
+  "collector_exit": 0,
+  "dataset_file_hashes_verified": 152,
+  "full_test_campaigns_repeated": false,
+  "independent_matches": true,
+  "independent_recalculation_exit": 0,
+  "ordinary_builds_only": true,
+  "plain_equals_derived": true,
+  "plain_formal_summary_exit": 0,
+  "ready_for_independent_dataset_review": true,
+  "require_formal_equals_derived": true,
+  "require_formal_summary_exit": 0,
+  "source_input_hashes_verified": 72,
+  "source_sha": "0da4d1f4356027b16e9f4f32164ee9261585c33d"
+}

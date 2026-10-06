@@ -1,0 +1,54 @@
+{
+  "actions": "Read-only sampling and bundle metadata inspection. No process termination or settings changes. Formal traffic not started.",
+  "bundle_identifier": "com.apple.ScreenSaver.Engine.legacyScreenSaver.x86-64",
+  "cpu_seconds": 20.20999999999185,
+  "extension_point": "com.apple.screensaver",
+  "interpretation": "Sustained current CPU consumption by a background legacy screensaver engine. Its process name/extension identity does not establish a visually active screensaver or that it renders the desktop wallpaper. Operator reports Mac awake and no visible screensaver. Separate WallpaperAgent/Aerials/Image processes sampled 0.0 percent.",
+  "interval_average_cpu_percent": 128.13030803986746,
+  "intervals": [
+    {
+      "cpu_percent": 133.48882668339846,
+      "cpu_seconds": 7.579999999987194,
+      "wall_seconds": 5.678377875
+    },
+    {
+      "cpu_percent": 128.59274422341204,
+      "cpu_seconds": 6.5,
+      "wall_seconds": 5.054717542
+    },
+    {
+      "cpu_percent": 121.62916413678151,
+      "cpu_seconds": 6.130000000004657,
+      "wall_seconds": 5.039909666
+    }
+  ],
+  "name": "legacyScreenSaver-x86_64",
+  "pid": "desktop-process-001",
+  "samples": [
+    {
+      "cpu_seconds": 189430.91,
+      "local_time": "2026-10-06 00:14:41 CDT",
+      "monotonic": 0.129893208,
+      "reported_cpu_percent": 118.9
+    },
+    {
+      "cpu_seconds": 189438.49,
+      "local_time": "2026-10-06 00:14:46 CDT",
+      "monotonic": 5.808271083,
+      "reported_cpu_percent": 143.0
+    },
+    {
+      "cpu_seconds": 189444.99,
+      "local_time": "2026-10-06 00:14:51 CDT",
+      "monotonic": 10.862988625,
+      "reported_cpu_percent": 146.1
+    },
+    {
+      "cpu_seconds": 189451.12,
+      "local_time": "2026-10-06 00:14:56 CDT",
+      "monotonic": 15.902898291,
+      "reported_cpu_percent": 141.3
+    }
+  ],
+  "wall_seconds": 15.773005083
+}

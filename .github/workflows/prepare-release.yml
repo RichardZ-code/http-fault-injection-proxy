@@ -1,0 +1,169 @@
+name: Prepare release candidate
+
+'on':
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Reviewed full source SHA (must equal the selected workflow commit)
+        required: true
+        type: string
+      version:
+        description: Proposed vMAJOR.MINOR.PATCH
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GOWORK: 'off'
+  GOTOOLCHAIN: local
+  CGO_ENABLED: '1'
+  GOFLAGS: ''
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  native:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+          - runner: macos-15
+            goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Verify frozen source and proposed version
+        env:
+          SOURCE: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE" = "$WORKFLOW_SHA"
+          python3 scripts/release.py source-check --source "$SOURCE" --version "$VERSION"
+      - name: Native checks, helper suites and clean-directory binary demo
+        env:
+          EXPECT_OS: ${{ matrix.goos }}
+          EXPECT_ARCH: ${{ matrix.goarch }}
+        run: bash scripts/ci_native.sh "$RUNNER_TEMP/evidence"
+      - name: Current vulnerability analysis, workflow lint and bounded benchmark correctness smoke
+        run: bash scripts/ci_tools.sh "$RUNNER_TEMP/evidence"
+      - name: Native Linux container checks
+        if: matrix.goos == 'linux'
+        run: |
+          set -euo pipefail
+          docker version >"$RUNNER_TEMP/evidence/docker-version.txt"
+          docker build --platform=linux/amd64 --target=upstream -t faultproxy-fixture:ci . >"$RUNNER_TEMP/evidence/fixture-build.log" 2>&1
+          docker build --platform=linux/amd64 --target=proxy -t faultproxy:ci . >"$RUNNER_TEMP/evidence/proxy-build.log" 2>&1
+          docker build --platform=linux/amd64 --target=capture -t faultproxy-capture:ci . >"$RUNNER_TEMP/evidence/capture-build.log" 2>&1
+          python3 scripts/docker_smoke.py --native --image faultproxy:ci --upstream-image faultproxy-fixture:ci --client "$RUNNER_TEMP/evidence/bin/retry-client" --output "$RUNNER_TEMP/evidence/docker-plain"
+          python3 scripts/docker_smoke.py --native --capture --image faultproxy-capture:ci --upstream-image faultproxy-fixture:ci --client "$RUNNER_TEMP/evidence/bin/retry-client" --output "$RUNNER_TEMP/evidence/docker-capture"
+      - name: Build and inspect native candidate archive
+        env:
+          SOURCE: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+          PLATFORM: ${{ matrix.goos }}_${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/assets"
+          python3 scripts/release.py native --source "$SOURCE" --version "$VERSION" --directory "$RUNNER_TEMP/assets" --binary "$RUNNER_TEMP/evidence/bin/faultproxy" --platform "$PLATFORM"
+          archive="$RUNNER_TEMP/assets/http-fault-injection-proxy_${VERSION#v}_${PLATFORM}.tar.gz"
+          python3 scripts/release.py verify-native --source "$SOURCE" --version "$VERSION" --archive "$archive" --platform "$PLATFORM" --destination "$RUNNER_TEMP/native-installed"
+          python3 scripts/demo.py --proxy "$RUNNER_TEMP/native-installed/faultproxy" --upstream "$RUNNER_TEMP/evidence/bin/upstream" --client "$RUNNER_TEMP/evidence/bin/retry-client" --output "$RUNNER_TEMP/evidence/installed-demo" >"$RUNNER_TEMP/evidence/installed-demo.log" 2>&1
+      - name: Export exact source and the tested Linux image
+        if: matrix.goos == 'linux'
+        env:
+          SOURCE: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release.py source --source "$SOURCE" --version "$VERSION" --directory "$RUNNER_TEMP/assets"
+          python3 scripts/release.py extract --source "$SOURCE" --version "$VERSION" --archive "$RUNNER_TEMP/assets/http-fault-injection-proxy_${VERSION#v}_source.tar.gz" --destination "$RUNNER_TEMP/source-installed"
+          source_root="$RUNNER_TEMP/source-installed/http-fault-injection-proxy-${VERSION#v}"
+          (cd "$source_root"; go mod verify; go build -o "$RUNNER_TEMP/source-proxy" ./cmd/faultproxy)
+          python3 scripts/demo.py --proxy "$RUNNER_TEMP/source-proxy" --upstream "$RUNNER_TEMP/evidence/bin/upstream" --client "$RUNNER_TEMP/evidence/bin/retry-client" --output "$RUNNER_TEMP/evidence/source-demo" >"$RUNNER_TEMP/evidence/source-demo.log" 2>&1
+          docker save --output "$RUNNER_TEMP/assets/image.tar" faultproxy:ci
+          cp "$RUNNER_TEMP/evidence/docker-plain/docker-smoke.json" "$RUNNER_TEMP/assets/docker-smoke.json"
+          python3 - "$RUNNER_TEMP/assets" "$SOURCE" <<'PYTHON'
+          import hashlib, json, pathlib, subprocess, sys
+          from scripts.release import image_config
+          root=pathlib.Path(sys.argv[1])
+          image=json.loads(subprocess.check_output(['docker','image','inspect','faultproxy:ci']))[0]
+          smoke=json.loads((root/'docker-smoke.json').read_text())
+          assert smoke['passed'] and smoke['native'] and smoke['image_id']==image['Id']
+          m=dict(schema=1,source_sha=sys.argv[2],platform='linux/amd64',image_id=image['Id'],config_digest=image_config(root/'image.tar'),archive_sha256=hashlib.sha256((root/'image.tar').read_bytes()).hexdigest(),tested=True,build='Dockerfile proxy target; pinned bases; CGO_ENABLED=0 -trimpath -buildvcs=false; runtime source identity unknown; explicit preparation source attribution')
+          (root/'image.json').write_text(json.dumps(m,indent=2)+'\n')
+          PYTHON
+      - name: Preserve module metadata and whitespace checks even on failure
+        if: always()
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- go.mod go.sum
+          git diff --check
+      - name: Preserve verification evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: assets-${{ matrix.goos }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/assets
+          retention-days: 14
+          if-no-files-found: error
+  assemble:
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: assets-linux-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate
+          digest-mismatch: error
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: assets-darwin-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate
+          digest-mismatch: error
+      - name: Finalize selected candidate identities
+        env:
+          SOURCE: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: python3 scripts/release.py finalize --source "$SOURCE" --version "$VERSION" --directory "$RUNNER_TEMP/candidate" --repository "$REPOSITORY" --run-id "$RUN_ID" --attempt "$ATTEMPT" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-${{ inputs.source_sha }}-${{ inputs.version }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate
+          retention-days: 14
+          if-no-files-found: error

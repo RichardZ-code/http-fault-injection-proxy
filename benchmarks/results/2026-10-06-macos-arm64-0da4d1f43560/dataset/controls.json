@@ -1,0 +1,100 @@
+{
+  "delay": [
+    {
+      "condition": "zero",
+      "duration_seconds": 0.0006800840000096287,
+      "request": 1
+    },
+    {
+      "condition": "zero",
+      "duration_seconds": 0.0003462500000068758,
+      "request": 2
+    },
+    {
+      "condition": "zero",
+      "duration_seconds": 0.0003165420000641461,
+      "request": 3
+    },
+    {
+      "condition": "fixed",
+      "duration_seconds": 0.05207954200000131,
+      "request": 1
+    },
+    {
+      "condition": "fixed",
+      "duration_seconds": 0.05203441699995892,
+      "request": 2
+    },
+    {
+      "condition": "fixed",
+      "duration_seconds": 0.0522785840000779,
+      "request": 3
+    }
+  ],
+  "fixed_evidence": {
+    "metrics": {
+      "actions": {
+        "delay": 3.0
+      },
+      "errors": {},
+      "histogram": 3.0,
+      "outcomes": {
+        "upstream_response": 3.0
+      },
+      "requests": 3.0
+    },
+    "upstream": {
+      "active": 0,
+      "calls": 3,
+      "cancelled": 0
+    }
+  },
+  "timeout_evidence": {
+    "metrics": {
+      "actions": {},
+      "errors": {
+        "timeout": 2.0
+      },
+      "histogram": 2.0,
+      "outcomes": {
+        "incomplete_response": 1.0,
+        "upstream_timeout": 1.0
+      },
+      "requests": 2.0
+    },
+    "upstream": {
+      "active": 0,
+      "calls": 2,
+      "cancelled": 2
+    }
+  },
+  "timeouts": [
+    {
+      "incomplete": false,
+      "route": "/slow",
+      "status": 504
+    },
+    {
+      "incomplete": true,
+      "route": "/partial",
+      "status": 200
+    }
+  ],
+  "valid": true,
+  "zero_evidence": {
+    "metrics": {
+      "actions": {},
+      "errors": {},
+      "histogram": 3.0,
+      "outcomes": {
+        "upstream_response": 3.0
+      },
+      "requests": 3.0
+    },
+    "upstream": {
+      "active": 0,
+      "calls": 3,
+      "cancelled": 0
+    }
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "correctness_requests": 1000,
+  "delay_requests_per_condition": 3,
+  "kind": "formal",
+  "pairs": [
+    {
+      "attempt": 1,
+      "id": "v1-r1",
+      "measure_ms": 30000,
+      "order": 0,
+      "paths": [
+        "direct",
+        "proxy"
+      ],
+      "repetition": 1,
+      "vu": 1,
+      "warm_ms": 5000
+    },
+    {
+      "attempt": 1,
+      "id": "v1-r2",
+      "measure_ms": 30000,
+      "order": 1,
+      "paths": [
+        "proxy",
+        "direct"
+      ],
+      "repetition": 2,
+      "vu": 1,
+      "warm_ms": 5000
+    },
+    {
+      "attempt": 1,
+      "id": "v1-r3",
+      "measure_ms": 30000,
+      "order": 2,
+      "paths": [
+        "direct",
+        "proxy"
+      ],
+      "repetition": 3,
+      "vu": 1,
+      "warm_ms": 5000
+    },
+    {
+      "attempt": 1,
+      "id": "v25-r1",
+      "measure_ms": 30000,
+      "order": 3,
+      "paths": [
+        "proxy",
+        "direct"
+      ],
+      "repetition": 1,
+      "vu": 25,
+      "warm_ms": 5000
+    },
+    {
+      "attempt": 1,
+      "id": "v25-r2",
+      "measure_ms": 30000,
+      "order": 4,
+      "paths": [
+        "direct",
+        "proxy"
+      ],
+      "repetition": 2,
+      "vu": 25,
+      "warm_ms": 5000
+    },
+    {
+      "attempt": 1,
+      "id": "v25-r3",
+      "measure_ms": 30000,
+      "order": 5,
+      "paths": [
+        "proxy",
+        "direct"
+      ],
+      "repetition": 3,
+      "vu": 25,
+      "warm_ms": 5000
+    },
+    {
+      "attempt": 1,
+      "id": "v100-r1",
+      "measure_ms": 30000,
+      "order": 6,
+      "paths": [
+        "direct",
+        "proxy"
+      ],
+      "repetition": 1,
+      "vu": 100,
+      "warm_ms": 5000
+    },
+    {
+      "attempt": 1,
+      "id": "v100-r2",
+      "measure_ms": 30000,
+      "order": 7,
+      "paths": [
+        "proxy",
+        "direct"
+      ],
+      "repetition": 2,
+      "vu": 100,
+      "warm_ms": 5000
+    },
+    {
+      "attempt": 1,
+      "id": "v100-r3",
+      "measure_ms": 30000,
+      "order": 8,
+      "paths": [
+        "direct",
+        "proxy"
+      ],
+      "repetition": 3,
+      "vu": 100,
+      "warm_ms": 5000
+    }
+  ],
+  "retry_operations": 1000,
+  "retry_repetitions": 3,
+  "timeout_requests_per_route": 1
+}

@@ -1,10 +1,40 @@
 # HTTP Fault Injection Proxy
 
-A Go project for local and CI testing of client behavior under controlled latency, synthetic 5xx responses, and upstream deadlines.
+A small Go HTTP/1.1 reverse proxy for testing clients against fixed delays, synthetic 5xx responses and upstream deadlines. It forwards to one configured HTTP origin, exposes four bounded Prometheus metric families and supports best-effort JSON access capture. The included GET retry client demonstrates the cost of bounded retries.
 
-P03 provides tested HTTP pass-through. P04 replaces its temporary configuration subset with the complete strict schema and a working `--check-config`. Startup applies first-match fixed delays and deterministic or seeded synthetic 5xx rules. P05 adds forwarding deadlines, cancellation through blocked I/O, checked final flushing, and bounded signal-driven shutdown. P06 adds bounded Prometheus metrics and structured request logs. P07 adds native fixture/retry examples and container packaging. P07 container checks passed on Docker Desktop using emulated linux/amd64 execution on Apple Silicon; formal benchmark measurements and releases remain pending.
+## Quick start
 
-P05 native Linux/macOS CI passed on its implementation commit: Linux executed in attempt 1; macOS acquired a runner and executed in attempt 2 after an infrastructure cancellation. P06 and P07 passed both native hosted jobs on their respective implementation commits. P07's previously recorded CI applies to `f9409004a19ed1e2cf68968b9124ef0bbd9e0392`; its workflow does not test containers. The P08 independent audit of `68fd054b16dd27b9676968e83d3be9dbca5933dd` found no actionable correctness findings or required production corrections; it did not independently reverify hosted CI. See [verification](docs/verification.md) and [progress](docs/progress.md) for attributed evidence and pending container/provenance gates.
+Use a local checkout with Go 1.27.1, a native C compiler, Python 3.9+ and POSIX `ps`. Native Go execution has been checked on macOS ARM64 and Linux amd64. Windows and other platforms are outside the verified scope. Published binary downloads and GHCR images are not yet available; installation currently means building source.
+
+From the repository root:
+
+```sh
+export GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=1
+mkdir -p bin
+go build -o bin/faultproxy ./cmd/faultproxy
+go build -o bin/upstream ./examples/upstream
+go build -o bin/retry-client ./examples/retry-client
+./bin/faultproxy --check-config --upstream=http://127.0.0.1:8081 --config=examples/demo.yaml
+python3 scripts/demo.py
+```
+
+Config-check prints `configuration valid` and binds nothing. The demonstration owns free loopback ports, runs the actual binaries from a clean temporary location, shows pass-through, every-third 503, retry/restart and delay/timeout cohorts, checks metrics and parsed capture, then stops/reaps its processes and proves ports reusable. See the [two-minute demo](docs/demo.md) for the expected evidence and [log capture](#runnable-log-capture) for a usable production launch recipe.
+
+For an interactive run, start `./bin/upstream` in one terminal, then run this in a second:
+
+```sh
+./bin/faultproxy --upstream=http://127.0.0.1:8081 --config=examples/demo.yaml
+```
+
+In a third terminal, request `http://127.0.0.1:8080/ok` and inspect `http://127.0.0.1:9090/metrics`. Fresh state returns 200,200,503,200,200,503 for six requests. Ctrl-C stops the foreground proxy; stop the fixture separately. Ordinary terminal or file stderr may be blocking and is skipped by the bounded sink policy. Use the capture helper below when records are needed.
+
+## Architecture and scope
+
+The request path is: HTTP admission and bounded body buffering, first-match synchronized rule allocation, cancellable delay, synthetic response or one fixed-upstream ReverseProxy, checked final downstream flush, then terminal metrics/log observation and cleanup. No rule lock spans waiting or I/O. Admin health/metrics use a separate listener and do not consume fault state.
+
+This is a local/CI client-testing tool, not an internet-facing service. Only supported origin-form HTTP/1.1 requests and an HTTP upstream are accepted. There is no TLS termination, arbitrary forward proxy, upgrade/WebSocket, streaming upload, distributed control plane or production availability claim. Response streaming remains bounded by deadlines; handler-observable completion does not certify client receipt or later server chunk/trailer finalization.
+
+The [accepted behavior contract](docs/design.md), [independent correctness evidence](docs/verification.md) and [progress](docs/progress.md) separate historical results from pending gates. Local Docker verification used linux/amd64 emulation on Apple Silicon. Final native Linux container checks and candidate/consumer workflows are prepared, with hosted acceptance pending. Existing P07 image identities describe earlier uncommitted build inputs, not the measured commit or a release.
 
 ## Current HTTP runtime and startup boundary
 
@@ -142,9 +172,11 @@ PY
 
 The verified small cohort yielded 200, 200, 503, 200, 200, 503 and six parsed access records (four `upstream_response`, two `synthetic_status`). This is a demonstration, not a lossless guarantee. Proxy contention/backpressure can drop records; native short writes, helper chunk drops/short writes, output failure, or writer termination can leave fragments or lose the tail. Valid JSON alone does not prove a complete capture. Ignore/report malformed lines as above; command-validation/final terminal diagnostics can also be plain text. No fsync/durability or client-receipt claim is made. Keep the directory until inspection, then remove only that owned directory. Capture tests additionally use the POSIX `ps` utility.
 
-The [P09 benchmark method](benchmarks/README.md) provides preparation and reduced smoke commands. Formal measurements have not started. The following P07 container recipes were verified locally with Docker Desktop. They do not establish native Linux or hosted CI results.
+The [P09 benchmark method](benchmarks/README.md) describes the reviewed harness and reduced correctness smoke. The separately authorized formal dataset is linked below. The following P07 container recipes were verified locally with Docker Desktop. They do not establish native Linux or hosted CI results.
 
-## P07 fixture and bounded GET retry demonstration
+<a id="p07-fixture-and-bounded-get-retry-demonstration"></a>
+
+## Fixture and bounded GET retry demonstration
 
 Build from the repository root with Go 1.27.1. Python 3.9+ and POSIX ps are additional capture/test tools, not dependencies of either Go example. The fixture and retry code use only the standard library.
 
@@ -187,7 +219,9 @@ An application attempt is one `Client.Do` plus response handling. Go 1.27.1 can 
 
 No-retry responses were 200,200,503,200,200,503. Fresh restart reproduced them. Metrics had matching terminal/histogram counts, two started status actions and no synthetic upstream error events; additional admin scrapes changed nothing. A separate native cohort observed 250 ms selected delay, genuine upstream 503, pre-header 504 and post-header incomplete 200, with two cancelled upstream waits and no active fixture work. These are correctness observations, not performance or general availability claims. Retries consume more requests and operation time and change the global fault schedule.
 
-## P07 containers (verified on Docker Desktop)
+<a id="p07-containers-verified-on-docker-desktop"></a>
+
+## Docker (local emulation verified)
 
 Docker Desktop 4.94.0, CLI/Engine 29.8.2, Compose 5.5.1 and Buildx 0.37.2 were verified on the local `desktop-linux` context. Its Linux ARM64 daemon/build platform ran static linux/amd64 application images through emulation. The pinned Go builder executed Go 1.27.1 linux/arm64; the capture image executed Python 3.14.8. These are Mac-hosted Docker checks, not native Linux or hosted CI. No backend/context/settings change was made; the exact emulation backend was not identified.
 
@@ -282,6 +316,28 @@ Observed plain and capture cohorts matched the native table: six no-retry operat
 SIGINT clean stop and SIGTERM active drain/force passed for both entry points. Deliberately forced requests used a 10,000 ms forwarding config with the fixture held for 20 s and alive through cleanup. Plain/capture forced application/helper exits were 1 after approximately 5.42 s; active 3 s requests drained with exit 0. State/events showed no OOM or Docker SIGKILL. The helper preserved proxy exits 0/1/2. A SIGSTOP-stalled writer held 64,637 bytes in its 65,536-byte queue during a bounded 300-request correctness probe; output stayed undrained, proxy reaping preceded writer cleanup, and helper exit 0 released ports. Its unchanged separate writer allowance remains at most 0.5 s after proxy reaping. The helper may kill/reap its own stalled writer; that is distinct from Docker forcibly killing the application.
 
 A real 1,024-byte file-size-limit failure also stopped capture normally, preserving proxy/helper exit 0 while leaving incomplete output. Capture remains lossy. Forced cleanup may add the plain `faultproxy: shutdown grace expired` terminal diagnostic; report that separately from parsed access records and unparsed fragments. Handler completion does not certify client receipt or post-handler framing. Native Linux container execution, committed-source image provenance and hosted Docker checks remain pending; exact dirty-source image/binary identities and historical emulation evidence are in [progress](docs/progress.md#p07-docker-continuation-results). P08 inspected that evidence and the existing images without rebuilding or executing containers; see [verification](docs/verification.md#evidence-boundaries-and-remaining-gates).
+
+## Measured results
+
+[Reviewed textual dataset and per-trial evidence](benchmarks/results/2026-10-06-macos-arm64-0da4d1f43560/README.md), measured at `0da4d1f4356027b16e9f4f32164ee9261585c33d` on native Apple M3/macOS ARM64 with Go 1.27.1 and k6 2.3.0:
+
+| Constant VUs | Median paired proxy minus direct p95 | Three-pair range | Median paired proxy/direct throughput |
+| --- | ---: | ---: | ---: |
+| 1 | 0.060 ms | 0.060–0.061 ms | 0.631 |
+| 25 | 1.481 ms | 1.256–1.565 ms | 0.435 |
+| 100 | 5.427 ms | 5.3928–7.153 ms | 0.573 |
+
+These are nine alternating-order local pairs, each path with 5 s excluded warm-up and a 30 s measured start-membership window, fixed 1 KiB GET bodies and keep-alive. Shared-machine desktop activity remained, resource monitoring was not continuous and there were only three repetitions. Logging construction/attempts were enabled while blocking-file emission was skipped; capture was excluded. k6 HTTP duration excludes initial DNS/connection/blocked time. This closed-loop workload does not establish maximum capacity, an SLA, universal overhead, Linux performance or container performance. Individual overhead samples were not retained, so independent verification covered k6 aggregates and derived arithmetic.
+
+Separate N=5 correctness observed 200 synthetic responses and 800 upstream calls in 1,000 requests. Each of three no-retry trials succeeded on 800/1,000 logical operations with 1,000 physical requests; each retry trial succeeded on 1,000/1,000 with 1,249 physical requests and 1,000 upstream calls. All-outcome operation p95 ranged 0.143–0.205 ms without retries and 103.012–103.186 ms with retries. Those quantiles were recalculated from all 6,000 operation records. Retry modes consume different physical fault schedules and backoff time; this is not a paired identical-fault availability comparison.
+
+Production and measured workload inputs remain unchanged in the documentation/workflow preparation. The imported package is a privacy-filtered textual subset; full formal validation requires original omitted binaries restored into a disposable copy. See its restoration instructions and original/published checksum receipt.
+
+## CI and release status
+
+[Native Go checks](.github/workflows/ci.yml) retains exact Go 1.27.1/native cgo assertions, formatting, module consistency/integrity, vet, full uncached ordinary/race suites and builds. Both suites execute all 28 Python benchmark-helper tests and four capture-helper checks through their Go wrappers; executable children are ordinary builds. The prepared final workflow adds helper/identity tests, current pinned govulncheck scans, workflow lint, reduced benchmark correctness smoke and native Linux plain/capture container smoke. Smoke is correctness evidence only, with no performance threshold. Native hosted execution of these additions remains pending.
+
+The measured harness revision's Linux/macOS CI passed in [run 37415876833](https://github.com/RichardZ-code/http-fault-injection-proxy/actions/runs/37415876833). That run predates the final workflow additions and did not verify containers. [Release preparation](docs/release.md) documents the manual, nonpublishing candidate workflow and later, separately authorized tested-image promotion/public consumer checks. Prepared workflows are not executed releases. No tag, release or public-image availability is claimed.
 
 ## Development
 

@@ -1,0 +1,12 @@
+{
+  "authorization": "Explicit user authorization for complete formal p09-v1 cohort; no source edits or result import",
+  "ci_attempt": 1,
+  "measured_sha": "0da4d1f4356027b16e9f4f32164ee9261585c33d",
+  "preflight": "Clean HEAD/origin matched expected SHA; no-traffic plan passed; retained official k6 archive/checksum/binary identities reverified",
+  "preflight_disturbances": [
+    "Screensaver observed at 134.4 percent CPU before timing; operator asked to dismiss it",
+    "pmset thermal/performance warning data unavailable (0xe00002bc)"
+  ],
+  "recorded_utc": "2026-10-06T05:07:11Z",
+  "verified_ci_run": "37415876833"
+}

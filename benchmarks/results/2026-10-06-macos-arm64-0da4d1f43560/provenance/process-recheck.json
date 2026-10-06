@@ -1,0 +1,154 @@
+[
+  {
+    "monotonic": 0.129893208,
+    "processes": [
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:12.67",
+        "elapsed": "08-07:53:01",
+        "executable": "/System/Library/CoreServices/WallpaperAgent.app/Contents/MacOS/WallpaperAgent",
+        "pid": "desktop-process-002",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:03.09",
+        "elapsed": "08-07:53:01",
+        "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension",
+        "pid": "desktop-process-004",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:02.13",
+        "elapsed": "08-07:53:01",
+        "executable": "/System/Library/ExtensionKit/Extensions/WallpaperImageExtension.appex/Contents/MacOS/WallpaperImageExtension",
+        "pid": "desktop-process-005",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 118.9,
+        "cpu_time": "3157:10.91",
+        "elapsed": "07-06:04:33",
+        "executable": "/System/Library/Frameworks/ScreenSaver.framework/PlugIns/legacyScreenSaver-x86_64.appex/Contents/MacOS/legacyScreenSaver-x86_64",
+        "pid": "desktop-process-001",
+        "ppid": "desktop-process-003"
+      }
+    ],
+    "utc": "2026-10-06T05:14:41.163288+00:00"
+  },
+  {
+    "monotonic": 5.808271083,
+    "processes": [
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:12.71",
+        "elapsed": "08-07:53:06",
+        "executable": "/System/Library/CoreServices/WallpaperAgent.app/Contents/MacOS/WallpaperAgent",
+        "pid": "desktop-process-002",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:03.10",
+        "elapsed": "08-07:53:06",
+        "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension",
+        "pid": "desktop-process-004",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:02.14",
+        "elapsed": "08-07:53:06",
+        "executable": "/System/Library/ExtensionKit/Extensions/WallpaperImageExtension.appex/Contents/MacOS/WallpaperImageExtension",
+        "pid": "desktop-process-005",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 143.0,
+        "cpu_time": "3157:18.49",
+        "elapsed": "07-06:04:38",
+        "executable": "/System/Library/Frameworks/ScreenSaver.framework/PlugIns/legacyScreenSaver-x86_64.appex/Contents/MacOS/legacyScreenSaver-x86_64",
+        "pid": "desktop-process-001",
+        "ppid": "desktop-process-003"
+      }
+    ],
+    "utc": "2026-10-06T05:14:46.842875+00:00"
+  },
+  {
+    "monotonic": 10.862988625,
+    "processes": [
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:12.72",
+        "elapsed": "08-07:53:11",
+        "executable": "/System/Library/CoreServices/WallpaperAgent.app/Contents/MacOS/WallpaperAgent",
+        "pid": "desktop-process-002",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:03.10",
+        "elapsed": "08-07:53:11",
+        "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension",
+        "pid": "desktop-process-004",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:02.14",
+        "elapsed": "08-07:53:11",
+        "executable": "/System/Library/ExtensionKit/Extensions/WallpaperImageExtension.appex/Contents/MacOS/WallpaperImageExtension",
+        "pid": "desktop-process-005",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 146.1,
+        "cpu_time": "3157:24.99",
+        "elapsed": "07-06:04:43",
+        "executable": "/System/Library/Frameworks/ScreenSaver.framework/PlugIns/legacyScreenSaver-x86_64.appex/Contents/MacOS/legacyScreenSaver-x86_64",
+        "pid": "desktop-process-001",
+        "ppid": "desktop-process-003"
+      }
+    ],
+    "utc": "2026-10-06T05:14:51.897678+00:00"
+  },
+  {
+    "monotonic": 15.902898291,
+    "processes": [
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:12.73",
+        "elapsed": "08-07:53:16",
+        "executable": "/System/Library/CoreServices/WallpaperAgent.app/Contents/MacOS/WallpaperAgent",
+        "pid": "desktop-process-002",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:03.10",
+        "elapsed": "08-07:53:16",
+        "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension",
+        "pid": "desktop-process-004",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 0.0,
+        "cpu_time": "0:02.14",
+        "elapsed": "08-07:53:16",
+        "executable": "/System/Library/ExtensionKit/Extensions/WallpaperImageExtension.appex/Contents/MacOS/WallpaperImageExtension",
+        "pid": "desktop-process-005",
+        "ppid": "desktop-process-003"
+      },
+      {
+        "cpu_percent": 141.3,
+        "cpu_time": "3157:31.12",
+        "elapsed": "07-06:04:48",
+        "executable": "/System/Library/Frameworks/ScreenSaver.framework/PlugIns/legacyScreenSaver-x86_64.appex/Contents/MacOS/legacyScreenSaver-x86_64",
+        "pid": "desktop-process-001",
+        "ppid": "desktop-process-003"
+      }
+    ],
+    "utc": "2026-10-06T05:14:56.937650+00:00"
+  }
+]

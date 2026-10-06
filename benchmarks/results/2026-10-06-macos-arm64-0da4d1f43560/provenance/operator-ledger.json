@@ -1,0 +1,235 @@
+{
+  "after": {
+    "cpu": {
+      "exit": 0,
+      "top_processes": [
+        {
+          "command": "Google Chrome Helper (Renderer)",
+          "cpu_percent": 37.1,
+          "pid": "desktop-process-006",
+          "ppid": "desktop-process-007"
+        },
+        {
+          "command": "WindowServer",
+          "cpu_percent": 20.2,
+          "pid": "desktop-process-010",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "coreaudiod",
+          "cpu_percent": 8.1,
+          "pid": "desktop-process-013",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "Google Chrome Helper",
+          "cpu_percent": 6.3,
+          "pid": "desktop-process-014",
+          "ppid": "desktop-process-007"
+        },
+        {
+          "command": "opendirectoryd",
+          "cpu_percent": 1.4,
+          "pid": "desktop-process-028",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "CloudflareWARP",
+          "cpu_percent": 1.3,
+          "pid": "desktop-process-027",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "corespeechd",
+          "cpu_percent": 1.2,
+          "pid": "desktop-process-017",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "VTDecoderXPCService",
+          "cpu_percent": 0.9,
+          "pid": "desktop-process-019",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "logd",
+          "cpu_percent": 0.7,
+          "pid": "desktop-process-029",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "notifyd",
+          "cpu_percent": 0.7,
+          "pid": "desktop-process-030",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "Finder",
+          "cpu_percent": 0.7,
+          "pid": "desktop-process-031",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "launchd",
+          "cpu_percent": 0.6,
+          "pid": "desktop-process-003",
+          "ppid": "desktop-process-032"
+        },
+        {
+          "command": "audioanalyticsd",
+          "cpu_percent": 0.6,
+          "pid": "desktop-process-033",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "configd",
+          "cpu_percent": 0.4,
+          "pid": "desktop-process-034",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "Microsoft Outlook",
+          "cpu_percent": 0.4,
+          "pid": "desktop-process-022",
+          "ppid": "desktop-process-003"
+        }
+      ]
+    },
+    "power": {
+      "exit": 0,
+      "output": "Now drawing from 'AC Power'\n -InternalBattery-0 (identifier omitted)\t80%; AC attached; not charging present: true\n"
+    },
+    "thermal": {
+      "exit": 0,
+      "output": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded\n"
+    }
+  },
+  "before": {
+    "cpu": {
+      "exit": 0,
+      "top_processes": [
+        {
+          "command": "WindowServer",
+          "cpu_percent": 20.8,
+          "pid": "desktop-process-010",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "Google Chrome Helper (Renderer)",
+          "cpu_percent": 18.6,
+          "pid": "desktop-process-006",
+          "ppid": "desktop-process-007"
+        },
+        {
+          "command": "coreaudiod",
+          "cpu_percent": 10.1,
+          "pid": "desktop-process-013",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "codex",
+          "cpu_percent": 6.5,
+          "pid": "desktop-process-012",
+          "ppid": "desktop-process-009"
+        },
+        {
+          "command": "Google Chrome Helper (Renderer)",
+          "cpu_percent": 5.7,
+          "pid": "desktop-process-023",
+          "ppid": "desktop-process-007"
+        },
+        {
+          "command": "Google Chrome Helper",
+          "cpu_percent": 4.6,
+          "pid": "desktop-process-014",
+          "ppid": "desktop-process-007"
+        },
+        {
+          "command": "Google Chrome Helper (Renderer)",
+          "cpu_percent": 2.1,
+          "pid": "desktop-process-024",
+          "ppid": "desktop-process-007"
+        },
+        {
+          "command": "Google Chrome Helper (Renderer)",
+          "cpu_percent": 1.6,
+          "pid": "desktop-process-025",
+          "ppid": "desktop-process-007"
+        },
+        {
+          "command": "Google Chrome",
+          "cpu_percent": 1.3,
+          "pid": "desktop-process-007",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "Google Chrome Helper",
+          "cpu_percent": 1.0,
+          "pid": "desktop-process-026",
+          "ppid": "desktop-process-007"
+        },
+        {
+          "command": "CloudflareWARP",
+          "cpu_percent": 0.9,
+          "pid": "desktop-process-027",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "com.apple.DriverKit-AppleBCMWLAN",
+          "cpu_percent": 0.9,
+          "pid": "desktop-process-015",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "Codex (Service)",
+          "cpu_percent": 0.8,
+          "pid": "desktop-process-016",
+          "ppid": "desktop-process-009"
+        },
+        {
+          "command": "corespeechd",
+          "cpu_percent": 0.7,
+          "pid": "desktop-process-017",
+          "ppid": "desktop-process-003"
+        },
+        {
+          "command": "Microsoft Outlook",
+          "cpu_percent": 0.5,
+          "pid": "desktop-process-022",
+          "ppid": "desktop-process-003"
+        }
+      ]
+    },
+    "power": {
+      "exit": 0,
+      "output": "Now drawing from 'AC Power'\n -InternalBattery-0 (identifier omitted)\t80%; AC attached; not charging present: true\n"
+    },
+    "thermal": {
+      "exit": 0,
+      "output": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded\n"
+    }
+  },
+  "caffeinate_exit": 0,
+  "caffeinate_pid": 73136,
+  "caffeinate_reaped": true,
+  "command": [
+    "/usr/bin/python3",
+    "${SOURCE_ROOT}/benchmarks/harness.py",
+    "formal",
+    "--expected-sha",
+    "0da4d1f4356027b16e9f4f32164ee9261585c33d",
+    "--k6",
+    "${TOOL_ROOT}/k6-v2.3.0-macos-arm64/k6",
+    "--conditions",
+    "AC power verified before collection; scoped caffeinate -d -i -s holds display/system awake until harness exit; heavy screensaver cleared after preflight; pre-collection ten-second sampling confirmed legacy engine absent; Chrome renderer process desktop-process-006 consumed 3.30 CPU seconds over 10.11 seconds (about 33 percent of one core), WindowServer about 22 percent; ordinary Codex/Chrome/system background processes remain; no agent concurrent tests/builds/Docker workloads; thermal/performance warning query unavailable; process samples before/after only, not continuous proof of idle or absence of disturbances.",
+    "--output",
+    "${DATASET_ROOT}"
+  ],
+  "events": [],
+  "finish_utc": "2026-10-06T05:30:51.686575+00:00",
+  "harness_exit": 0,
+  "harness_kill": false,
+  "harness_pid": 73135,
+  "harness_reaped": true,
+  "start_utc": "2026-10-06T05:18:40.624708+00:00"
+}

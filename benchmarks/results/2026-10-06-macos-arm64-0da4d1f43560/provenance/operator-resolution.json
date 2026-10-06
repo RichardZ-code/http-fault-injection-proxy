@@ -1,0 +1,9 @@
+{
+  "collection_wrapper_sha256": "45cd3020c589fe861cbb2c8ea9aaf60802ff94486c541fe08a00e421cebc5729",
+  "conditions": "AC power; shared native Mac; ordinary desktop background load retained and disclosed in harness conditions; no claim of entirely idle host.",
+  "external_wrapper_change": "Before collection, condition attestation expanded to include measured Chrome/WindowServer activity. Tracked harness/source remained unchanged.",
+  "timing_attempts": "One formal campaign, one attempt per prescribed pair; preflight blockage produced no timed trials.",
+  "user_action": "Operator stated they quit the identified legacy screensaver process. Agent did not terminate it or any unrelated process.",
+  "utc": "2026-10-06T05:21:09Z",
+  "verified": "process desktop-process-001 absent from all three post-operator samples over approximately ten seconds."
+}

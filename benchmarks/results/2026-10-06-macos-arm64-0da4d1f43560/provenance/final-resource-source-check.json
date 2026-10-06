@@ -1,0 +1,15 @@
+{
+  "all_recorded_owned_pids_absent": true,
+  "head": "0da4d1f4356027b16e9f4f32164ee9261585c33d",
+  "method": "Read-only ps and fresh task-owned loopback rebind probes. No signals to unrelated processes.",
+  "nonempty_child_stderr": [],
+  "owned_pid_count_checked": 64,
+  "ports_rebound_and_probe_closed": [
+    50169,
+    50168,
+    50167
+  ],
+  "source_input_hashes_rechecked": 72,
+  "tracked_and_untracked_status": "",
+  "utc": "2026-10-06T05:31:54Z"
+}

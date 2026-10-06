@@ -1,0 +1,8 @@
+version: 1
+rules:
+  - id: fifths
+    method: GET
+    path_prefix: /benchmark
+    faults:
+      every_nth_request: 5
+      status: 503

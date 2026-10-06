@@ -1,0 +1,15 @@
+{
+  "cause": "ScreenSaver process remained active at approximately 134-136 percent CPU. Required no-concurrent-heavy-work condition cannot be attested. Operator asked to dismiss it.",
+  "formal_traffic_started": false,
+  "head": "0da4d1f4356027b16e9f4f32164ee9261585c33d",
+  "owned_resources": "No proxy, fixture, k6 load, listener or collection sleep assertion started. External preparation retained.",
+  "status": "waiting_for_operator_machine_conditions",
+  "task_owned_wake_probe": {
+    "command": "caffeinate -u -t 2",
+    "exit": 0,
+    "reaped": true,
+    "result": "did not clear the observed screensaver CPU load"
+  },
+  "tracked_state": "",
+  "utc": "2026-10-06T05:12:15Z"
+}

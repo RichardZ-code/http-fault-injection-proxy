@@ -1,6 +1,6 @@
 # P09 benchmark method
 
-Preparation only. Formal measurements have not started. Review and commit the harness through GitHub Desktop, verify that exact commit's native CI, and obtain separate authorization before invoking `formal`. A successful smoke does not advance this gate. The [accepted protocol](../docs/design.md#11-benchmark-protocol-and-provenance) and [P09 decisions](../docs/design-decisions.md#p09-preparation-choices) explain source authority and routine choices. Historical [P08 verification](../docs/verification.md) is separate evidence.
+Formal collection and independent dataset review have completed for measured source `0da4d1f4356027b16e9f4f32164ee9261585c33d`. The [approved textual import](results/2026-10-06-macos-arm64-0da4d1f43560/README.md) preserves per-trial results, conditions and original/published hashes. Future formal collection still requires a reviewed clean harness commit, exact native CI and separate authorization. A smoke is correctness evidence only. The [accepted protocol](../docs/design.md#11-benchmark-protocol-and-provenance) and [P09 decisions](../docs/design-decisions.md#p09-preparation-choices) explain source authority and routine choices. Historical [P08 verification](../docs/verification.md) is separate evidence.
 
 ## Tools and setup
 
@@ -128,7 +128,7 @@ An invalid overhead path invalidates its whole pair. Failed attempt identity and
 
 Only owned process sessions are signalled. Proxy terminates before upstream so its existing drain budget remains effective; each stop has an 8 s bound, then owned kill/reap protection and an invalid cleanup record. Build/tool commands also use owned sessions: their existing timeout or interruption kills the owned group and allows at most 3 s for pipe collection/direct-child reaping, preserving the original failure. A surviving tool group after ordinary completion is killed and rejected. Independently owned resources are all attempted, children reaped, HTTP connections/files closed, all three ports rebound, first substantive errors preserved alongside cleanup errors. Repeated signals add no budget; interruption unwinds the same cleanup. Port selection releases task-owned reservations immediately before launch; a competing owner winning that race causes failure, never an unrelated kill. Keep useful external evidence until reviewed, then remove only directories created for this task. No Docker resource or global cache cleanup is performed.
 
-## Later formal continuation, not executed
+## Future formal collection (separate authorization required)
 
 After preparation review, user Desktop commit/push, exact-revision native CI verification and explicit collection authorization:
 
@@ -151,16 +151,12 @@ The condition text is an operator attestation, not a programmatic proof of human
 
 Formal guards check expected 40-character SHA, clean staged/unstaged/untracked state, actual source bytes/executable modes against committed blobs even if Git status flags hide modifications, committed required inputs, exact native tool versions and an external new path before traffic. Input/source/tool/binary identities are checked at builds/trial boundaries and completion. Never edit source, upgrade tools or write progress mid-campaign. Any drift stops/invalidates collection. All output remains external until finished; this supersedes the design's older ignored in-checkout staging wording under the explicit P09 request.
 
-After complete validation, independently inspect/recalculate raw records and every outcome. Only after that separate review, import the complete selected dataset and derived table into a new `benchmarks/results/<dataset-name>` for another review. For example, with NEW_DATASET_NAME chosen and no existing destination:
+After complete validation, independently inspect/recalculate raw records and every outcome. Import only the separately reviewed privacy-filtered inventory, never binaries, tool archives or machine-specific collection scripts. The October 6 import contains 167 existing files and three generated receipt/readme/checksum files; complete originals and independent review are preserved in ignored durable local storage, outside temporary storage and Git. Original binary entries remain in manifest.json. The textual subset alone does not satisfy formal validation; restore original binaries into a disposable copy as documented in the result README. Do not replace them with rebuilt bytes.
+
+Published checksum verification from the repository root:
 
 ```sh
-: "${NEW_DATASET_NAME:?choose a new reviewed dataset directory name}"
-case "$NEW_DATASET_NAME" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
-mkdir -p benchmarks/results
-test ! -e "benchmarks/results/$NEW_DATASET_NAME"
-cp -R "$FORMAL_PARENT/dataset" "benchmarks/results/$NEW_DATASET_NAME"
+python3 scripts/evidence.py benchmarks/results/2026-10-06-macos-arm64-0da4d1f43560
 ```
 
-This copies the complete validated external dataset; it is not authorized during preparation. Retain invalid-attempt history and link any previous failed campaign in the reviewed results record. Runtime artifacts can be bulky; review the complete import and private runtime paths before the separately authorized results commit, retaining raw evidence/identity and removing no adverse measurements. Attribute records to MEASURED_SHA, not the later documentation/results commit. No broad benchmark-results ignore rule is introduced. The user commits results separately through Desktop. A successful-path source change requires affected remeasurement; an unrelated change can retain explicitly historical results only with a justified source comparison. Never relabel old measurements.
-
-Constant-VU traffic is closed-loop: achieved rate varies with latency. Local comparisons do not establish maximum capacity, fixed-arrival-rate SLA or universal overhead. Three pairs are the prescribed comparison, not a broad statistical guarantee. No formal CI performance threshold, container axis, remote output or published performance claim is added. Native Linux containers, committed-image provenance and hosted Docker checks remain pending and are not established by native Go checks or Mac timings.
+This verifies the textual inventory, published hashes, unchanged raw records and private-path/secret-pattern guard. It does not rerun formal collection or re-estimate overhead quantiles from individual samples, which were not retained. Measurement claims stay attributed to the measured SHA even when later documentation/workflow commits differ. Any successful forwarding/workload change requires affected measurements before describing those numbers as current behavior.

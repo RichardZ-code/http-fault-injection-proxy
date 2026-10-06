@@ -1,0 +1,139 @@
+name: Verify published release
+
+'on':
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Reviewed full source SHA
+        required: true
+        type: string
+      version:
+        description: Proposed vMAJOR.MINOR.PATCH
+        required: true
+        type: string
+      sums_sha256:
+        description: Reviewed SHA256SUMS file SHA-256
+        required: true
+        type: string
+      image_digest:
+        description: Published registry manifest digest (sha256 colon 64 hex)
+        required: true
+        type: string
+      image_id:
+        description: Reviewed Docker store image ID (sha256 colon 64 hex)
+        required: true
+        type: string
+      config_digest:
+        description: Reviewed saved-image configuration digest (sha256 colon 64 hex)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GOWORK: 'off'
+  GOTOOLCHAIN: local
+  CGO_ENABLED: '1'
+  GOFLAGS: ''
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  consumer:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+          - runner: macos-15
+            goos: darwin
+            goarch: arm64
+    env:
+      SOURCE: ${{ inputs.source_sha }}
+      VERSION: ${{ inputs.version }}
+      SUMS_HASH: ${{ inputs.sums_sha256 }}
+      IMAGE_DIGEST: ${{ inputs.image_digest }}
+      IMAGE_ID: ${{ inputs.image_id }}
+      CONFIG_DIGEST: ${{ inputs.config_digest }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Validate consumer inputs and download public bytes without authentication
+        run: |
+          set -euo pipefail
+          python3 - "$SOURCE" "$VERSION" "$SUMS_HASH" "$IMAGE_DIGEST" "$IMAGE_ID" "$CONFIG_DIGEST" <<'PYTHON'
+          import re,sys
+          from scripts.release import identity
+          identity(sys.argv[1],sys.argv[2])
+          assert re.fullmatch('[a-f0-9]{64}',sys.argv[3])
+          assert all(re.fullmatch('sha256:[a-f0-9]{64}',v) for v in sys.argv[4:])
+          PYTHON
+          mkdir -p "$RUNNER_TEMP/public"
+          base="https://github.com/$REPOSITORY/releases/download/$VERSION"
+          for suffix in darwin_arm64 linux_amd64 source; do
+            asset="http-fault-injection-proxy_${VERSION#v}_${suffix}.tar.gz"
+            curl --disable --proto '=https' --proto-redir '=https' --fail --location --connect-timeout 10 --max-time 120 "$base/$asset" --output "$RUNNER_TEMP/public/$asset"
+          done
+          curl --disable --proto '=https' --proto-redir '=https' --fail --location --connect-timeout 10 --max-time 30 "$base/SHA256SUMS" --output "$RUNNER_TEMP/public/SHA256SUMS"
+          python3 scripts/release.py public-check --source "$SOURCE" --version "$VERSION" --hash "$SUMS_HASH" --directory "$RUNNER_TEMP/public"
+      - name: Native downloaded archive and downloaded source demonstration
+        env:
+          PLATFORM: ${{ matrix.goos }}_${{ matrix.goarch }}
+          EXPECT_OS: ${{ matrix.goos }}
+          EXPECT_ARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "$EXPECT_OS/$EXPECT_ARCH"
+          python3 scripts/release.py verify-native --source "$SOURCE" --version "$VERSION" --platform "$PLATFORM" --archive "$RUNNER_TEMP/public/http-fault-injection-proxy_${VERSION#v}_${PLATFORM}.tar.gz" --destination "$RUNNER_TEMP/installed"
+          python3 scripts/release.py extract --source "$SOURCE" --version "$VERSION" --archive "$RUNNER_TEMP/public/http-fault-injection-proxy_${VERSION#v}_source.tar.gz" --destination "$RUNNER_TEMP/source-installed"
+          source_root="$RUNNER_TEMP/source-installed/http-fault-injection-proxy-${VERSION#v}"
+          (cd "$source_root"; go mod tidy -diff; go mod verify; go build -o "$RUNNER_TEMP/source-proxy" ./cmd/faultproxy; go build -o "$RUNNER_TEMP/upstream" ./examples/upstream; go build -o "$RUNNER_TEMP/retry-client" ./examples/retry-client)
+          python3 "$source_root/scripts/demo.py" --proxy "$RUNNER_TEMP/installed/faultproxy" --upstream "$RUNNER_TEMP/upstream" --client "$RUNNER_TEMP/retry-client" --output "$RUNNER_TEMP/native-demo" >"$RUNNER_TEMP/native-demo.log" 2>&1
+          python3 "$source_root/scripts/demo.py" --proxy "$RUNNER_TEMP/source-proxy" --upstream "$RUNNER_TEMP/upstream" --client "$RUNNER_TEMP/retry-client" --output "$RUNNER_TEMP/source-demo" >"$RUNNER_TEMP/source-demo.log" 2>&1
+      - name: Anonymous digest pull, image identity and native Linux smoke
+        if: matrix.goos == 'linux'
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/anonymous-docker"
+          mkdir -m 700 "$DOCKER_CONFIG"
+          printf '{}\n' >"$DOCKER_CONFIG/config.json"
+          image="ghcr.io/${REPOSITORY,,}@$IMAGE_DIGEST"
+          docker pull --platform=linux/amd64 "$image"
+          docker image inspect "$image" >"$RUNNER_TEMP/public/anonymous-image.json"
+          test "$(docker image inspect --format '{{.Id}}' "$image")" = "$IMAGE_ID"
+          docker save --output "$RUNNER_TEMP/anonymous-image.tar" "$image"
+          actual_config=$(python3 scripts/release.py image-config --source "$SOURCE" --version "$VERSION" --archive "$RUNNER_TEMP/anonymous-image.tar")
+          test "$actual_config" = "$CONFIG_DIGEST"
+          source_root="$RUNNER_TEMP/source-installed/http-fault-injection-proxy-${VERSION#v}"
+          docker build --platform=linux/amd64 --target=upstream -t faultproxy-consumer-fixture:local "$source_root"
+          # Only the fixture is built; the proxy is the anonymously pulled digest.
+          python3 "$source_root/scripts/docker_smoke.py" --native --image "$image" --upstream-image faultproxy-consumer-fixture:local --client "$RUNNER_TEMP/retry-client" --output "$RUNNER_TEMP/docker-consumer"
+      - name: Preserve consumer evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: public-consumer-${{ matrix.goos }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/public
+            ${{ runner.temp }}/native-demo*
+            ${{ runner.temp }}/source-demo*
+            ${{ runner.temp }}/docker-consumer
+          retention-days: 14
+          if-no-files-found: warn

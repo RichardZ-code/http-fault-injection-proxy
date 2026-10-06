@@ -1,0 +1,19 @@
+{
+  "external_scripts_ast": "passed",
+  "plan_exit": 0,
+  "python": "3.9.6",
+  "scripts_and_plan_sha256": {
+    "collect_owned.py": "1ca905685114b5aace393180892d17d1ff1068b78ebe121c8686a75ae8229cc6",
+    "independent_recalculate.py": "6b826a88820aa40bdb61eba908107a8b95c0fc4d9f6f13ad107d0de6f73527af",
+    "plan.json": "fb560ca2cb1fbd3a1d07e95ee10bb8970cbaedd7561e9ab65310059bd7045f03"
+  },
+  "tool_verification": {
+    "archive_binary_match": true,
+    "archive_sha256": "b2417a3038edc5fe81dc178a889237724b595c5c9cfed875822008e46e862c7d",
+    "binary_sha256": "efb8282e24ffe18f54ce3679eaa71d72e0645bbb97b14e2a05cc8b192abf48e3",
+    "note": "Pinned retained archive/checksum bytes reverified; no claim of new signature verification.",
+    "retained_official_checksum_match": true,
+    "version": "k6 v2.3.0 (commit/e088784614, go1.26.8, darwin/arm64)"
+  },
+  "utc": "2026-10-06T05:09:55Z"
+}

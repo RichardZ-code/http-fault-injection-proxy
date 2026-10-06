@@ -9,11 +9,22 @@ name: Native Go checks
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
+env:
+  GOWORK: 'off'
+  GOTOOLCHAIN: local
+  CGO_ENABLED: '1'
+  GOFLAGS: ''
+  PYTHONDONTWRITEBYTECODE: '1'
+
 jobs:
   native:
     name: ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -21,76 +32,48 @@ jobs:
           - runner: ubuntu-24.04
             goos: linux
             goarch: amd64
-            runner_os: Linux
-            runner_arch: X64
           - runner: macos-15
             goos: darwin
             goarch: arm64
-            runner_os: macOS
-            runner_arch: ARM64
-    env:
-      GOWORK: 'off'
-      GOTOOLCHAIN: local
-      CGO_ENABLED: '1'
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.1'
           check-latest: false
           cache: true
           cache-dependency-path: go.sum
-      - name: Assert exact toolchain and native cgo platform
+      - name: Native checks, helper suites and clean-directory binary demo
         env:
           EXPECT_OS: ${{ matrix.goos }}
           EXPECT_ARCH: ${{ matrix.goarch }}
-          EXPECT_RUNNER_OS: ${{ matrix.runner_os }}
-          EXPECT_RUNNER_ARCH: ${{ matrix.runner_arch }}
+        run: bash scripts/ci_native.sh "$RUNNER_TEMP/evidence"
+      - name: Current vulnerability analysis, workflow lint and bounded benchmark correctness smoke
+        run: bash scripts/ci_tools.sh "$RUNNER_TEMP/evidence"
+      - name: Native Linux container checks
+        if: matrix.goos == 'linux'
         run: |
           set -euo pipefail
-          go version
-          go env GOHOSTOS GOHOSTARCH GOOS GOARCH CGO_ENABLED CC GOWORK GOTOOLCHAIN GOFLAGS
-          printf 'Runner: %s/%s\n' "$RUNNER_OS" "$RUNNER_ARCH"
-          test "$(go env GOVERSION)" = go1.27.1
-          test "$(go env GOHOSTOS)" = "$EXPECT_OS"
-          test "$(go env GOOS)" = "$EXPECT_OS"
-          test "$(go env GOHOSTARCH)" = "$EXPECT_ARCH"
-          test "$(go env GOARCH)" = "$EXPECT_ARCH"
-          test "$(go env CGO_ENABLED)" = 1
-          test "$RUNNER_OS" = "$EXPECT_RUNNER_OS"
-          test "$RUNNER_ARCH" = "$EXPECT_RUNNER_ARCH"
-          compiler=$(go env CC)
-          command -v "$compiler"
-          "$compiler" --version
-      - name: Check formatting without mutation
-        run: |
-          set -euo pipefail
-          unformatted=$(git ls-files -z '*.go' | xargs -0 gofmt -l)
-          if [ -n "$unformatted" ]; then
-            printf '%s\n' "$unformatted"
-            exit 1
-          fi
-      - name: Check module consistency and integrity
-        run: |
-          set -euo pipefail
-          go mod tidy -diff
-          go mod verify
-      - name: Vet
-        run: go vet ./...
-      - name: Uncached tests and external-directory executable smoke
-        run: go test -v -count=1 -timeout=120s ./...
-      - name: Uncached native race tests
-        run: go test -race -count=1 -timeout=120s ./...
-      - name: Build executable
-        run: go build -o bin/faultproxy ./cmd/faultproxy
-      - name: Check dependency metadata preservation and whitespace
+          docker version >"$RUNNER_TEMP/evidence/docker-version.txt"
+          docker build --platform=linux/amd64 --target=upstream -t faultproxy-fixture:ci . >"$RUNNER_TEMP/evidence/fixture-build.log" 2>&1
+          docker build --platform=linux/amd64 --target=proxy -t faultproxy:ci . >"$RUNNER_TEMP/evidence/proxy-build.log" 2>&1
+          docker build --platform=linux/amd64 --target=capture -t faultproxy-capture:ci . >"$RUNNER_TEMP/evidence/capture-build.log" 2>&1
+          python3 scripts/docker_smoke.py --native --image faultproxy:ci --upstream-image faultproxy-fixture:ci --client "$RUNNER_TEMP/evidence/bin/retry-client" --output "$RUNNER_TEMP/evidence/docker-plain"
+          python3 scripts/docker_smoke.py --native --capture --image faultproxy-capture:ci --upstream-image faultproxy-fixture:ci --client "$RUNNER_TEMP/evidence/bin/retry-client" --output "$RUNNER_TEMP/evidence/docker-capture"
+      - name: Preserve module metadata and whitespace checks even on failure
         if: always()
         run: |
           set -euo pipefail
           git diff --exit-code -- go.mod go.sum
           git diff --check
+      - name: Preserve verification evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence
+          retention-days: 14
+          if-no-files-found: error

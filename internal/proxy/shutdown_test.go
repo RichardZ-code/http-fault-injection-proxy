@@ -46,7 +46,7 @@ func assertRuntimeReleased(t *testing.T, r *Runtime) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.connections) != 0 || !r.connectionsJoined {
-		t.Fatal("native connection work remains", len(r.connections))
+		t.Fatalf("native connection work remains: connections=%d sealed=%t joined=%t owners=%d", len(r.connections), r.connectionsSealed, r.connectionsJoined, len(r.owners))
 	}
 	if len(r.owners) != 0 {
 		t.Fatal("request owners remain", len(r.owners))
@@ -315,14 +315,32 @@ func TestShutdownCleanupErrorPreserved(t *testing.T) {
 func TestShutdownJoinFailureReported(t *testing.T) {
 	entered, returned := make(chan struct{}), make(chan struct{})
 	release := make(chan struct{})
-	var once sync.Once
+	closedEntered, releaseClosed := make(chan struct{}), make(chan struct{})
+	var once, closedOnce sync.Once
 	r := lifecycleFixture(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {}), "", nil, func(r *Runtime) {
 		r.admin.Handler = r.track(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { close(entered); <-release; close(returned) }))
+		original := r.admin.ConnState
+		r.admin.ConnState = func(c net.Conn, state http.ConnState) {
+			if state == http.StateClosed {
+				// Hold native finalization after handler ownership has ended.
+				close(closedEntered)
+				<-releaseClosed
+			}
+			original(c, state)
+		}
 	}, 100*time.Millisecond, 100*time.Millisecond)
-	t.Cleanup(func() { once.Do(func() { close(release) }); receive(t, returned); receive(t, r.quiet) })
-	c := lifecycleClient(t)
 	result := make(chan error, 1)
+	t.Cleanup(func() {
+		once.Do(func() { close(release) })
+		closedOnce.Do(func() { close(releaseClosed) })
+		receive(t, returned)
+		receive(t, r.quiet)
+		receive(t, r.connectionsDone)
+		receive(t, result)
+	})
+	c := lifecycleClient(t)
 	go func() {
+		defer close(result)
 		res, err := c.Get("http://" + r.AdminAddr().String() + "/healthz")
 		if res != nil {
 			res.Body.Close()
@@ -330,13 +348,36 @@ func TestShutdownJoinFailureReported(t *testing.T) {
 		result <- err
 	}()
 	receive(t, entered)
+	began := time.Now()
 	if err := r.Shutdown(); !errors.Is(err, ErrForcedShutdown) || !errors.Is(err, ErrCleanupTimeout) {
 		t.Fatalf("unjoined work reported clean: %v", err)
+	}
+	if elapsed := time.Since(began); elapsed > time.Second {
+		t.Fatalf("injected join failure exceeded shutdown bound: %v", elapsed)
+	} else {
+		t.Logf("forced shutdown/cleanup timeout reported in %v with handler still held", elapsed)
 	}
 	once.Do(func() { close(release) })
 	receive(t, returned)
 	receive(t, r.quiet)
 	receive(t, result)
+	receive(t, closedEntered)
+	r.mu.Lock()
+	owners, connections := len(r.owners), len(r.connections)
+	r.mu.Unlock()
+	if owners != 0 || connections != 1 {
+		t.Fatalf("held finalization: owners=%d connections=%d", owners, connections)
+	}
+	select {
+	case <-r.connectionsDone:
+		t.Fatal("native finalization reported complete before StateClosed")
+	default:
+	}
+	t.Logf("handler/client completed with StateClosed held: owners=%d connections=%d", owners, connections)
+	closedOnce.Do(func() { close(releaseClosed) })
+	// A reported cleanup timeout ends Shutdown's wait, not the injected work.
+	// Join the released fixture through StateClosed before asserting cleanup.
+	receive(t, r.connectionsDone)
 	assertRuntimeReleased(t, r)
 }
 

@@ -21,6 +21,8 @@ import harness as h
 def loopback_response(wire, hold_open=False):
     """One owned real HTTP connection; EOF and all teardown are explicit."""
     listener = socket.socket()
+    # Linux requires reuse on both the original bound socket and the rebind.
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(('127.0.0.1', 0))
     listener.listen(1)
     listener.settimeout(3)

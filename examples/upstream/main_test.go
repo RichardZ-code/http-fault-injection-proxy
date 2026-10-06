@@ -6,9 +6,44 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestBenchmarkFixture(t *testing.T) {
+	f := &fixture{}
+	s := httptest.NewServer(f)
+	defer s.Close()
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(func() {
+			res, err := s.Client().Get(s.URL + "/benchmark")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			b, err := io.ReadAll(res.Body)
+			res.Body.Close()
+			if err != nil || res.StatusCode != 200 || res.Proto != "HTTP/1.1" || res.ContentLength != 1024 || string(b) != strings.Repeat("0123456789abcdef", 64) || res.Header.Get("Content-Type") != "text/plain; charset=utf-8" {
+				t.Errorf("benchmark bytes/headers: %d %d %v", res.StatusCode, len(b), err)
+			}
+		})
+	}
+	wg.Wait()
+	for _, path := range []string{"/healthz", "/stats"} {
+		res, err := s.Client().Get(s.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+	}
+	if f.calls.Load() != 20 || f.active.Load() != 0 {
+		t.Fatal("administrative traffic affected benchmark counts")
+	}
+}
 
 func TestFixtureRoutesAndCounts(t *testing.T) {
 	f := &fixture{delay: time.Millisecond}

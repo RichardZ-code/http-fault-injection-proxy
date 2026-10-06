@@ -1,0 +1,8 @@
+version: 1
+upstream_timeout_ms: 200
+rules:
+  - id: delayed
+    method: GET
+    path_prefix: /benchmark
+    faults:
+      delay_ms: 50

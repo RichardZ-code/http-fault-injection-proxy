@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -22,6 +23,12 @@ type fixture struct {
 	calls, active, cancelled atomic.Int64
 	delay                    time.Duration
 }
+
+// Immutable ASCII payload, shared by all benchmark responses.
+const benchmarkBody = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" +
+	"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+var benchmarkPayload = []byte(strings.Repeat(benchmarkBody, 8))
 
 func (f *fixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -42,7 +49,7 @@ func (f *fixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Cancelled int64 `json:"cancelled"`
 		}{f.calls.Load(), f.active.Load(), f.cancelled.Load()})
 		return
-	case "/ok", "/error", "/slow", "/partial":
+	case "/ok", "/error", "/slow", "/partial", "/benchmark":
 	default:
 		http.NotFound(w, r)
 		return
@@ -51,6 +58,9 @@ func (f *fixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.active.Add(1)
 	defer f.active.Add(-1)
 	switch r.URL.Path {
+	case "/benchmark":
+		w.Header().Set("Content-Length", "1024")
+		w.Write(benchmarkPayload)
 	case "/error":
 		w.WriteHeader(503)
 		io.WriteString(w, "fixture unavailable\n")

@@ -2,7 +2,7 @@
 
 A Go project for local and CI testing of client behavior under controlled latency, synthetic 5xx responses, and upstream deadlines.
 
-P03 provides tested HTTP pass-through. P04 replaces its temporary configuration subset with the complete strict schema and a working `--check-config`. Startup applies first-match fixed delays and deterministic or seeded synthetic 5xx rules. P05 adds forwarding deadlines, cancellation through blocked I/O, checked final flushing, and bounded signal-driven shutdown. P06 adds bounded Prometheus metrics and structured request logs. P07 adds native fixture/retry examples and container packaging. P07 container checks passed on Docker Desktop using emulated linux/amd64 execution on Apple Silicon; benchmarks and releases remain later phases.
+P03 provides tested HTTP pass-through. P04 replaces its temporary configuration subset with the complete strict schema and a working `--check-config`. Startup applies first-match fixed delays and deterministic or seeded synthetic 5xx rules. P05 adds forwarding deadlines, cancellation through blocked I/O, checked final flushing, and bounded signal-driven shutdown. P06 adds bounded Prometheus metrics and structured request logs. P07 adds native fixture/retry examples and container packaging. P07 container checks passed on Docker Desktop using emulated linux/amd64 execution on Apple Silicon; formal benchmark measurements and releases remain pending.
 
 P05 native Linux/macOS CI passed on its implementation commit: Linux executed in attempt 1; macOS acquired a runner and executed in attempt 2 after an infrastructure cancellation. P06 and P07 passed both native hosted jobs on their respective implementation commits. P07's previously recorded CI applies to `f9409004a19ed1e2cf68968b9124ef0bbd9e0392`; its workflow does not test containers. The P08 independent audit of `68fd054b16dd27b9676968e83d3be9dbca5933dd` found no actionable correctness findings or required production corrections; it did not independently reverify hosted CI. See [verification](docs/verification.md) and [progress](docs/progress.md) for attributed evidence and pending container/provenance gates.
 
@@ -142,7 +142,7 @@ PY
 
 The verified small cohort yielded 200, 200, 503, 200, 200, 503 and six parsed access records (four `upstream_response`, two `synthetic_status`). This is a demonstration, not a lossless guarantee. Proxy contention/backpressure can drop records; native short writes, helper chunk drops/short writes, output failure, or writer termination can leave fragments or lose the tail. Valid JSON alone does not prove a complete capture. Ignore/report malformed lines as above; command-validation/final terminal diagnostics can also be plain text. No fsync/durability or client-receipt claim is made. Keep the directory until inspection, then remove only that owned directory. Capture tests additionally use the POSIX `ps` utility.
 
-Formal benchmarks and k6 remain P09. The following P07 container recipes were verified locally with Docker Desktop. They do not establish native Linux or hosted CI results.
+The [P09 benchmark method](benchmarks/README.md) provides preparation and reduced smoke commands. Formal measurements have not started. The following P07 container recipes were verified locally with Docker Desktop. They do not establish native Linux or hosted CI results.
 
 ## P07 fixture and bounded GET retry demonstration
 

@@ -148,7 +148,7 @@ func TestCaptureExecutableSignalsAndStatus(t *testing.T) {
 			tr := &http.Transport{Proxy: nil}
 			t.Cleanup(tr.CloseIdleConnections)
 			c := &http.Client{Transport: tr, Timeout: 12 * time.Second}
-			waitHealth(t, c, a, child.done)
+			waitHealth(t, c, a, child)
 			pids := captureOwnedPIDs(t, child)
 			ctx, cancel := context.WithCancel(context.Background())
 			joined := make(chan struct{})

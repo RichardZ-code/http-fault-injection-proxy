@@ -169,7 +169,7 @@ func TestExecutableObservabilityDemonstration(t *testing.T) {
 	tr := &http.Transport{Proxy: nil, MaxIdleConnsPerHost: 10}
 	t.Cleanup(tr.CloseIdleConnections)
 	c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
-	waitHealth(t, c, a, child.done)
+	waitHealth(t, c, a, child)
 	ownedPIDs := captureOwnedPIDs(t, child)
 	fetch := func() exposedMetrics {
 		res, err := c.Get("http://" + a + "/metrics")

@@ -19,10 +19,14 @@ import (
 )
 
 type signalChild struct {
-	cmd    *exec.Cmd
-	done   chan error
-	joined chan struct{}
-	output bytes.Buffer
+	cmd         *exec.Cmd
+	done        chan error
+	joined      chan struct{}
+	output      bytes.Buffer
+	diagnostics childDiagnostics
+	captureErr  error
+	started     time.Time
+	stop        func()
 }
 
 func startSignalChild(t *testing.T, binary string, args []string) *signalChild {
@@ -31,23 +35,53 @@ func startSignalChild(t *testing.T, binary string, args []string) *signalChild {
 
 func startSignalChildStderr(t *testing.T, binary string, args []string, stderr io.Writer) *signalChild {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	return startExecutableChild(t, binary, args, stderr, 20*time.Second)
+}
+
+func startExecutableChild(t *testing.T, binary string, args []string, stderr io.Writer, timeout time.Duration) *signalChild {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	child := &signalChild{done: make(chan error, 1), joined: make(chan struct{})}
 	child.cmd = exec.CommandContext(ctx, binary, args...)
 	child.cmd.Dir = t.TempDir()
 	child.cmd.Env = executableEnv()
 	child.cmd.WaitDelay = time.Second
 	child.cmd.Stdout = &child.output
-	child.cmd.Stderr = &child.output
-	if stderr != nil {
+	var reader, writer *os.File
+	var drained chan error
+	if stderr == nil {
+		reader, writer = nonblockingStderrPipe(t)
+		child.cmd.Stderr = writer
+		drained = make(chan error, 1)
+		go func() { _, err := io.Copy(&child.diagnostics, reader); drained <- err }()
+	} else {
 		child.cmd.Stderr = stderr
 	}
+	child.started = time.Now()
 	if err := child.cmd.Start(); err != nil {
 		cancel()
+		if writer != nil {
+			writer.Close()
+			reader.Close()
+			<-drained
+		}
 		t.Fatal(err)
 	}
-	go func() { child.done <- child.cmd.Wait(); close(child.joined) }()
-	t.Cleanup(func() {
+	if writer != nil {
+		writer.Close()
+	}
+	go func() {
+		err := child.cmd.Wait()
+		if reader != nil {
+			// The child has been reaped. Bound and join only the test-owned drainer.
+			deadlineErr := reader.SetReadDeadline(time.Now().Add(time.Second))
+			child.captureErr = errors.Join(deadlineErr, <-drained)
+			reader.Close()
+		}
+		child.done <- err
+		close(child.joined)
+	}()
+	child.stop = func() {
 		select {
 		case <-child.joined:
 		default:
@@ -59,7 +93,8 @@ func startSignalChildStderr(t *testing.T, binary string, args []string, stderr i
 		case <-time.After(5 * time.Second):
 			t.Error("owned signal child did not reap")
 		}
-	})
+	}
+	t.Cleanup(child.stop)
 	return child
 }
 
@@ -134,7 +169,7 @@ func TestExecutableUndrainedStderrShutdown(t *testing.T) {
 	tr := &http.Transport{Proxy: nil}
 	t.Cleanup(tr.CloseIdleConnections)
 	c := &http.Client{Transport: tr, Timeout: 12 * time.Second}
-	waitHealth(t, c, a, child.done)
+	waitHealth(t, c, a, child)
 	ctx, cancel := context.WithCancel(context.Background())
 	joined := make(chan struct{})
 	go func() {
@@ -321,7 +356,7 @@ func (c *signalChild) wait(t *testing.T, want int) {
 	select {
 	case err = <-c.done:
 	case <-time.After(8 * time.Second):
-		t.Fatal("application did not exit within bounded stop policy")
+		t.Fatalf("application did not exit within bounded stop policy; %s", c.startupState())
 	}
 	code := 0
 	if err != nil {
@@ -332,8 +367,11 @@ func (c *signalChild) wait(t *testing.T, want int) {
 		code = exit.ExitCode()
 	}
 	event(t, c.joined)
+	if c.captureErr != nil {
+		t.Fatalf("owned diagnostic drainer: %v", c.captureErr)
+	}
 	if code != want {
-		t.Fatalf("signal child exit=%d want=%d output=%q", code, want, c.output.String())
+		t.Fatalf("signal child exit=%d want=%d stdout_bytes=%d; %s", code, want, c.output.Len(), c.startupState())
 	}
 	if want == 0 && c.output.Len() != 0 {
 		t.Fatalf("clean stop unexpected diagnostics=%q", c.output.String())
@@ -400,7 +438,7 @@ func TestExecutableSignalDrainRestart(t *testing.T) {
 			tr := &http.Transport{Proxy: nil}
 			t.Cleanup(tr.CloseIdleConnections)
 			client := &http.Client{Transport: tr, Timeout: 12 * time.Second}
-			waitHealth(t, client, a, child.done)
+			waitHealth(t, client, a, child)
 			result := make(chan error, 1)
 			go func() {
 				res, err := client.Get("http://" + d + "/active")
@@ -441,7 +479,7 @@ func TestExecutableSignalDrainRestart(t *testing.T) {
 			child.wait(t, 0)
 			assertRebind(t, d, a)
 			restart := startSignalChild(t, binary, startupArgs(u.URL, path, d, a))
-			waitHealth(t, client, a, restart.done)
+			waitHealth(t, client, a, restart)
 			res, err := client.Get("http://" + d + "/restart")
 			if err != nil {
 				t.Fatal(err)
@@ -491,7 +529,7 @@ func TestExecutableSignalForced(t *testing.T) {
 			tr := &http.Transport{Proxy: nil}
 			t.Cleanup(tr.CloseIdleConnections)
 			client := &http.Client{Transport: tr, Timeout: 12 * time.Second}
-			waitHealth(t, client, a, child.done)
+			waitHealth(t, client, a, child)
 			result := make(chan error, 1)
 			go func() {
 				res, err := client.Get("http://" + d + "/blocked")
@@ -591,7 +629,7 @@ func TestExecutableDeadlineTransfer(t *testing.T) {
 	tr := &http.Transport{Proxy: nil}
 	t.Cleanup(tr.CloseIdleConnections)
 	c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
-	waitHealth(t, c, a, child.done)
+	waitHealth(t, c, a, child)
 	res, err := c.Get("http://" + d + "/preheader")
 	if err != nil {
 		t.Fatal(err)

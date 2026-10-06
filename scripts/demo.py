@@ -8,6 +8,7 @@ No Docker claims.
 
 import argparse
 import collections
+from contextlib import ExitStack
 import hashlib
 import http.client
 import json
@@ -118,24 +119,41 @@ class Cohort:
         self.processes = []
         self.children = {}
         self.connections = []
-        self.up, self.data, self.admin = [available_port() for _ in range(3)]
-        require(len({self.up, self.data, self.admin}) == 3, "port allocation collision")
-        self.capture = directory / (name + ".jsonl")
-        self.config = directory / (name + ".yaml")
-        self.config.write_text(config)
-        self.config_hash = hashlib.sha256(self.config.read_bytes()).hexdigest()
-        try:
-            self.launch([str(binaries["upstream"]), "--listen=127.0.0.1:" + str(self.up), "--delay=3s"])
-            self.ready(self.up, "/healthz")
-            self.launch([sys.executable, str(ROOT / "scripts/capture_logs.py"), str(self.capture), "--",
-                         str(binaries["proxy"]), "--upstream=http://127.0.0.1:" + str(self.up),
-                         "--config=" + str(self.config), "--listen=127.0.0.1:" + str(self.data),
-                         "--admin-listen=127.0.0.1:" + str(self.admin)])
-            self.ready(self.admin, "/healthz")
-            self.children[self.processes[-1].pid] = child_pids(self.processes[-1].pid)
-        except BaseException:
-            self.close()
-            raise
+        # Keep all selections distinct and unavailable to our own readiness
+        # connections until the corresponding executable is about to bind.
+        # Public CLI startup still requires a close-to-bind handoff.
+        with ExitStack() as reservations:
+            listeners = [reservations.enter_context(socket.socket()) for _ in range(3)]
+            for listener in listeners:
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+            self.up, self.data, self.admin = [s.getsockname()[1] for s in listeners]
+            require(len({self.up, self.data, self.admin}) == 3, "port allocation collision")
+            self.capture = directory / (name + ".jsonl")
+            self.config = directory / (name + ".yaml")
+            self.config.write_text(config)
+            self.config_hash = hashlib.sha256(self.config.read_bytes()).hexdigest()
+            try:
+                listeners[0].close()
+                self.launch([str(binaries["upstream"]), "--listen=127.0.0.1:" + str(self.up), "--delay=3s"])
+                self.ready(self.up, "/healthz")
+                listeners[1].close()
+                listeners[2].close()
+                self.launch([sys.executable, str(ROOT / "scripts/capture_logs.py"), str(self.capture), "--",
+                             str(binaries["proxy"]), "--upstream=http://127.0.0.1:" + str(self.up),
+                             "--config=" + str(self.config), "--listen=127.0.0.1:" + str(self.data),
+                             "--admin-listen=127.0.0.1:" + str(self.admin)])
+                self.ready(self.admin, "/healthz")
+                self.children[self.processes[-1].pid] = child_pids(self.processes[-1].pid)
+            except BaseException as error:
+                reservations.close()
+                try:
+                    self.close()
+                except BaseException as cleanup_error:
+                    # Keep the initiating failure as the final exception, with
+                    # cleanup failure retained in its explicit cause chain.
+                    raise error from cleanup_error
+                raise
 
     def launch(self, command):
         # Blocking inherited stderr remains unsupported by the proxy itself;
@@ -148,15 +166,44 @@ class Cohort:
             output.close()
         self.processes.append(process)
 
+    def startup_state(self):
+        # No command arguments, paths, response bodies or arbitrary child text.
+        output = []
+        for path in [self.capture] + sorted(self.directory.glob(self.name + "-process-*.log")):
+            if not path.exists():
+                continue
+            with path.open("rb") as stream:
+                data = stream.read(65536)
+            events = []
+            for line in data.splitlines():
+                try:
+                    record = json.loads(line)
+                except (ValueError, UnicodeError):
+                    continue
+                if isinstance(record, dict) and record.get("msg") in (
+                        "startup failed", "runtime started", "runtime stopped", "HTTP server failure"):
+                    events.append(record["msg"])
+            output.append({"bytes": path.stat().st_size, "retained": len(data), "events": events})
+        return json.dumps({"processes": [{"pid": p.pid, "exit": p.poll()} for p in self.processes],
+                           "ports": [self.up, self.data, self.admin], "output": output}, sort_keys=True)
+
     def ready(self, port, path):
+        def alive():
+            if any(p.poll() is not None for p in self.processes):
+                raise RuntimeError("child exited before readiness")
         def check():
-            require(all(p.poll() is None for p in self.processes), "child exited before readiness")
+            alive()
             try:
-                status, _, body, _ = fetch(port, path)
-                return status == 200 and body == b"ok\n"
+                status, _, body, incomplete = fetch(port, path)
             except OSError:
+                alive()
                 return False
-        until(check, "bounded readiness failed")
+            alive()
+            return status == 200 and body == b"ok\n" and not incomplete
+        try:
+            until(check, "bounded readiness failed")
+        except RuntimeError as error:
+            raise RuntimeError(str(error) + "; startup state: " + self.startup_state()) from error
 
     def stats(self):
         status, _, body, _ = fetch(self.up, "/stats")

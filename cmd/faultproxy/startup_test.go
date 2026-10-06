@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,66 +32,62 @@ func startupArgs(upstream, path, data, admin string) []string {
 	return []string{"--upstream=" + upstream, "--config=" + path, "--listen=" + data, "--admin-listen=" + admin}
 }
 
-// stop kills and joins only the owned child. This verifies process cleanup,
-// not signal-driven graceful shutdown, which remains P05 work.
-func startChild(t *testing.T, binary string, args []string) (func(), <-chan error) {
+// stop kills and joins only the owned child; graceful signal assertions use wait.
+func startChild(t *testing.T, binary string, args []string) (func(), *signalChild) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Dir = t.TempDir()
-	cmd.Env = executableEnv()
-	cmd.WaitDelay = 3 * time.Second
-	var output bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &output, &output
-	if err := cmd.Start(); err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	joined := make(chan struct{})
-	go func() { done <- cmd.Wait(); close(joined) }()
-	var once sync.Once
-	stop := func() {
-		once.Do(func() {
-			cancel()
-			select {
-			case <-joined:
-			case <-time.After(10 * time.Second):
-				t.Error("owned child did not join after kill")
-			}
-		})
-	}
-	t.Cleanup(stop)
-	return stop, done
+	child := startExecutableChild(t, binary, args, nil, 30*time.Second)
+	return child.stop, child
 }
 
-func waitHealth(t *testing.T, client *http.Client, address string, done <-chan error) {
+func waitHealth(t *testing.T, client *http.Client, address string, child *signalChild) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if err := childHealth(ctx, client, address, child); err != nil {
+		t.Fatalf("%v; %s", err, child.startupState())
+	}
+}
+
+// Readiness must belong to a live owned child, including after an in-flight
+// health request. Observing joined does not consume the later exit assertion.
+func childHealth(ctx context.Context, client *http.Client, address string, child *signalChild) error {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
-	for {
+	exited := func() error {
 		select {
-		case err := <-done:
-			t.Fatalf("child exited before health readiness: %v", err)
+		case <-child.joined:
+			return fmt.Errorf("child exited before health readiness: %s", child.cmd.ProcessState)
+		default:
+			return nil
+		}
+	}
+	for {
+		if err := exited(); err != nil {
+			return err
+		}
+		select {
+		case <-child.joined:
+			return exited()
 		case <-ctx.Done():
-			t.Fatal("child health readiness deadline")
+			return fmt.Errorf("child health readiness deadline: %w", ctx.Err())
 		case <-ticker.C:
 			req, err := http.NewRequestWithContext(ctx, "GET", "http://"+address+"/healthz", nil)
 			if err != nil {
-				t.Fatal(err)
+				return err
 			}
 			res, err := client.Do(req)
 			if err != nil {
 				continue // Startup readiness polling only, never retry a data assertion.
 			}
-			b, err := io.ReadAll(res.Body)
+			b, err := io.ReadAll(io.LimitReader(res.Body, 4))
 			res.Body.Close()
-			if err != nil || res.StatusCode != 200 || string(b) != "ok\n" {
-				t.Fatalf("health readiness status=%d body=%q err=%v", res.StatusCode, b, err)
+			if exit := exited(); exit != nil {
+				return exit
 			}
-			return
+			if err != nil || res.StatusCode != 200 || string(b) != "ok\n" {
+				return fmt.Errorf("health readiness status=%d body_bytes=%d read_failed=%t", res.StatusCode, len(b), err != nil)
+			}
+			return nil
 		}
 	}
 }

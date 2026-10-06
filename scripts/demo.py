@@ -29,6 +29,16 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+def require_outcomes(name, expected, evidence, stats):
+    require(evidence["outcomes"] == expected,
+            "terminal outcomes mismatch: " + json.dumps({
+                "cohort": name, "expected_outcomes": expected,
+                "actual_outcomes": evidence["outcomes"],
+                "requests": evidence["requests"], "histogram": evidence["histogram"],
+                "actions": evidence["actions"], "errors": evidence["errors"],
+                "upstream": stats}, sort_keys=True))
+
+
 def available_port():
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -41,8 +51,10 @@ def child_pids(parent):
             if int(ppid) == parent]
 
 
-def fetch(port, path, headers=None, body=None):
+def fetch(port, path, headers=None, body=None, connections=None):
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    if connections is not None:
+        connections.append(connection)
     try:
         connection.request("GET", path, body=body, headers=headers or {})
         response = connection.getresponse()
@@ -55,7 +67,8 @@ def fetch(port, path, headers=None, body=None):
             body, incomplete = error.partial, True
         return response.status, dict(response.getheaders()), body, incomplete
     finally:
-        connection.close()
+        if connections is None:
+            connection.close()
 
 
 def until(predicate, message, seconds=5):
@@ -104,6 +117,7 @@ class Cohort:
         self.name = name
         self.processes = []
         self.children = {}
+        self.connections = []
         self.up, self.data, self.admin = [available_port() for _ in range(3)]
         require(len({self.up, self.data, self.admin}) == 3, "port allocation collision")
         self.capture = directory / (name + ".jsonl")
@@ -149,6 +163,11 @@ class Cohort:
         require(status == 200, "stats unavailable")
         return json.loads(body)
 
+    def fetch(self, path, headers=None, body=None):
+        # Complete client reads can precede the checked flush and terminal
+        # cleanup. Keep these owned cohort connections open until reconciliation.
+        return fetch(self.data, path, headers, body, self.connections)
+
     def reconcile(self, count):
         until(lambda: accounting(self.admin)["requests"] == count,
               "terminal publication did not reconcile")
@@ -159,6 +178,9 @@ class Cohort:
         return evidence
 
     def close(self):
+        for connection in self.connections:
+            connection.close()
+        self.connections.clear()
         # Keep upstream alive while the production proxy/helper drains.
         failure = None
         for process in reversed(self.processes):
@@ -240,7 +262,7 @@ def demonstration(binaries, directory):
         cohort = Cohort(directory, name, binaries, empty if mode is None else nth)
         try:
             if mode is None:
-                status, headers, body, incomplete = fetch(cohort.data, "/ok?query-secret", {"Authorization": "authorization-secret", "Cookie": "cookie-secret"}, b"body-secret")
+                status, headers, body, incomplete = cohort.fetch("/ok?query-secret", {"Authorization": "authorization-secret", "Cookie": "cookie-secret"}, b"body-secret")
                 require(status == 200 and body == b"fixture ok\n" and not incomplete and "X-Faultproxy-Injected" not in headers, "pass-through failed")
                 attempts, successes, expected_calls = 1, 1, 1
             else:
@@ -261,7 +283,7 @@ def demonstration(binaries, directory):
             stats = cohort.stats()
             require(stats == {"calls": expected_calls, "active": 0, "cancelled": 0}, "wire replay or unexpected fixture contact")
             require(evidence["errors"] == {}, "synthetic response invented upstream error")
-            require(evidence["outcomes"] == ({"upstream_response": 1} if mode is None else {"upstream_response": expected_calls, "synthetic_status": 2}), "terminal outcomes mismatch")
+            require_outcomes(name, {"upstream_response": 1} if mode is None else {"upstream_response": expected_calls, "synthetic_status": 2}, evidence, stats)
             require(evidence["actions"] == ({} if mode is None else {"status": 2}), "action counts mismatch")
             print(json.dumps({"cohort": name, "metrics": evidence, "upstream": stats}))
         finally:
@@ -272,20 +294,20 @@ def demonstration(binaries, directory):
     cohort = Cohort(directory, "delay-timeout", binaries, delay)
     try:
         started = time.monotonic()
-        status, _, body, incomplete = fetch(cohort.data, "/ok")
+        status, _, body, incomplete = cohort.fetch("/ok")
         elapsed = time.monotonic() - started
         require(status == 200 and body == b"fixture ok\n" and not incomplete and elapsed >= 0.20, "configured delay missing")
-        status, headers, body, incomplete = fetch(cohort.data, "/error")
+        status, headers, body, incomplete = cohort.fetch("/error")
         require(status == 503 and body == b"fixture unavailable\n" and not incomplete and "X-Faultproxy-Injected" not in headers, "real upstream 503 lost")
-        status, headers, body, incomplete = fetch(cohort.data, "/slow")
+        status, headers, body, incomplete = cohort.fetch("/slow")
         require(status == 504 and body == b"gateway timeout\n" and not incomplete and "X-Faultproxy-Injected" not in headers, "pre-header timeout failed")
-        status, _, body, incomplete = fetch(cohort.data, "/partial")
+        status, _, body, incomplete = cohort.fetch("/partial")
         require(status == 200 and incomplete and body == b"prefix\n", "post-header failure became replacement status")
         evidence = cohort.reconcile(4)
         until(lambda: cohort.stats()["active"] == 0, "fixture work did not cancel")
         stats = cohort.stats()
         require(stats == {"calls": 4, "active": 0, "cancelled": 2}, "upstream cleanup mismatch")
-        require(evidence["outcomes"] == {"upstream_response": 1, "upstream_http_error": 1, "upstream_timeout": 1, "incomplete_response": 1}, "causal outcome mismatch")
+        require_outcomes("delay-timeout", {"upstream_response": 1, "upstream_http_error": 1, "upstream_timeout": 1, "incomplete_response": 1}, evidence, stats)
         require(evidence["actions"] == {"delay": 1} and evidence["errors"] == {"http_5xx": 1, "timeout": 2}, "event mismatch")
         print(json.dumps({"cohort": "delay-timeout", "observed_delay_seconds": elapsed, "metrics": evidence, "upstream": stats}))
     finally:

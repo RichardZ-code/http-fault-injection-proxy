@@ -2,19 +2,31 @@
 """Arithmetic, owned-process and loopback framing tests, no performance traffic."""
 import copy
 from contextlib import contextmanager
+import errno
 import json
 import os
 from pathlib import Path
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
+import traceback
 import unittest
 from unittest import mock
 
 import harness as h
+
+
+def finish_fixture_response(connection):
+    try:
+        connection.shutdown(socket.SHUT_WR)
+    except OSError as error:
+        # Bounded rejection can close/reset the peer before fixture teardown.
+        if error.errno != errno.ENOTCONN:
+            raise
 
 
 @contextmanager
@@ -45,9 +57,9 @@ def loopback_response(wire, hold_open=False):
                     connection.sendall(message)
                 if hold_open:
                     release.wait(3)
-                connection.shutdown(socket.SHUT_WR)
-        except BaseException as error:
-            errors.append(error)
+                finish_fixture_response(connection)
+        except BaseException:
+            errors.append(traceback.format_exc())
         finally:
             listener.close()
     worker = threading.Thread(target=serve)
@@ -60,11 +72,11 @@ def loopback_response(wire, hold_open=False):
         worker.join(4)
         if worker.is_alive():
             raise AssertionError('loopback fixture did not terminate')
-        if errors:
-            raise AssertionError('loopback fixture failed: %s' % errors)
         with socket.socket() as released:
             released.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             released.bind(('127.0.0.1', port))
+        if errors:
+            raise AssertionError('loopback fixture failed:\n' + ''.join(errors))
 
 
 def raw_summary():
@@ -400,6 +412,81 @@ class Calculations(unittest.TestCase):
 
 
 class GuardsAndOwnership(unittest.TestCase):
+    def test_fixture_shutdown_handles_only_not_connected(self):
+        connection = mock.Mock()
+        connection.shutdown.side_effect = OSError(errno.ENOTCONN, 'peer disconnected')
+        finish_fixture_response(connection)
+        connection.shutdown.assert_called_once_with(socket.SHUT_WR)
+        for code in [errno.EBADF, errno.EIO, errno.ECONNRESET]:
+            with self.subTest(errno=code):
+                error = OSError(code, 'unexpected shutdown failure')
+                connection.shutdown.side_effect = error
+                with self.assertRaises(OSError) as caught:
+                    finish_fixture_response(connection)
+                self.assertIs(caught.exception, error)
+
+    def test_fixture_worker_failure_keeps_traceback(self):
+        # ENOTCONN belongs only to final shutdown, never request reads/writes.
+        for operation in ['recv', 'sendall']:
+            with self.subTest(operation=operation):
+                connection = mock.MagicMock()
+                connection.__enter__.return_value = connection
+                connection.recv.return_value = b'GET / HTTP/1.1\r\n\r\n'
+                getattr(connection, operation).side_effect = OSError(errno.ENOTCONN, 'unexpected fixture failure')
+                real_socket = socket.socket
+                class Listener(real_socket):
+                    def accept(self):
+                        return connection, ('127.0.0.1', 0)
+                with mock.patch.object(socket, 'socket', Listener), self.assertRaises(AssertionError) as caught:
+                    with loopback_response(b'response'):
+                        pass
+                diagnostic = str(caught.exception)
+                self.assertIn('Traceback (most recent call last)', diagnostic)
+                self.assertIn('connection.' + operation, diagnostic)
+                self.assertIn('unexpected fixture failure', diagnostic)
+                connection.__exit__.assert_called_once()
+
+    def test_fixture_real_peer_reset_before_write_shutdown(self):
+        sent, closed = threading.Event(), threading.Event()
+        shutdown_errors = []
+        real_socket = socket.socket
+        case = self
+        class Listener(real_socket):
+            def accept(self):
+                connection, peer = super().accept()
+                wrapped = mock.MagicMock(wraps=connection)
+                wrapped.__enter__.return_value = wrapped
+                wrapped.__exit__.side_effect = connection.__exit__
+                def sendall(message):
+                    connection.sendall(message)
+                    sent.set()
+                def shutdown(how):
+                    case.assertTrue(closed.wait(3), 'client did not close')
+                    with case.assertRaises(ConnectionResetError):
+                        connection.recv(1)
+                    try:
+                        connection.shutdown(how)
+                    except OSError as error:
+                        shutdown_errors.append(error.errno)
+                        raise
+                wrapped.sendall.side_effect = sendall
+                wrapped.shutdown.side_effect = shutdown
+                return wrapped, peer
+        wire = b'HTTP/1.1 200 OK\r\nContent-Length: 65538\r\n\r\n' + b'x' * 65538
+        with mock.patch.object(socket, 'socket', Listener), loopback_response(wire) as port:
+            try:
+                with real_socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+                    client.settimeout(3)
+                    # Only this test-owned peer is configured for abortive close.
+                    client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                    client.connect(('127.0.0.1', port))
+                    client.sendall(b'GET /benchmark HTTP/1.1\r\nHost: localhost\r\n\r\n')
+                    self.assertTrue(client.recv(4096))
+                    self.assertTrue(sent.wait(3), 'fixture did not finish sending')
+            finally:
+                closed.set()
+        self.assertEqual(shutdown_errors, [errno.ENOTCONN])
+
     def test_real_fixed_length_keep_alive_reuse(self):
         wire = b'HTTP/1.1 200 OK\r\nContent-Length: 1024\r\n\r\n' + h.BODY
         with tempfile.TemporaryDirectory() as d, loopback_response([wire, wire]) as port:

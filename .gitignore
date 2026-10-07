@@ -44,3 +44,4 @@ go.work.sum
 __pycache__/
 .env.*
 !.env.example
+.DS_Store
